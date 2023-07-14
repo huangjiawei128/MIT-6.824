@@ -1,0 +1,329 @@
+package mr
+
+import (
+	"fmt"
+	"log"
+	"sync"
+	"time"
+)
+import "net"
+import "os"
+import "net/rpc"
+import "net/http"
+
+const MAX_WAIT_SECOND = 5
+
+type Phase int
+
+const (
+	MapPhase = iota
+	ReducePhase
+	EndPhase
+)
+
+func (phase Phase) String() string {
+	var ret string
+	switch phase {
+	case MapPhase:
+		ret = "MapPhase"
+	case ReducePhase:
+		ret = "ReducePhase"
+	case EndPhase:
+		ret = "EndPhase"
+	}
+	return ret
+}
+
+type TaskState int
+
+const (
+	Idle = iota
+	Doing
+	Done
+)
+
+func (taskState TaskState) String() string {
+	var ret string
+	switch taskState {
+	case Idle:
+		ret = "Idle"
+	case Doing:
+		ret = "Doing"
+	case Done:
+		ret = "Done"
+	}
+	return ret
+}
+
+type TaskInfo struct {
+	State     TaskState
+	StartTime time.Time
+	Ptr       *Task
+}
+
+type Coordinator struct {
+	// Your definitions here.
+	mu sync.Mutex
+
+	Phase      Phase
+	MapperNum  int
+	ReducerNum int
+	Filenames  []string
+
+	MapChan    chan *Task
+	ReduceChan chan *Task
+
+	NextTaskId  int
+	TaskInfoMap map[int]*TaskInfo
+}
+
+// Your code here -- RPC handlers for the worker to call.
+
+func (c *Coordinator) GetNextTaskId() int {
+	ret := c.NextTaskId
+	c.NextTaskId++
+	return ret
+}
+
+func (c *Coordinator) StartTask(taskId int) bool {
+	taskInfo, ok := c.TaskInfoMap[taskId]
+	if ok && taskInfo.State == Idle {
+		c.TaskInfoMap[taskId].State = Doing
+		c.TaskInfoMap[taskId].StartTime = time.Now()
+		return true
+	}
+	return false
+}
+
+func (c *Coordinator) EndTask(taskId int) bool {
+	taskInfo, ok := c.TaskInfoMap[taskId]
+	if ok && taskInfo.State != Done {
+		c.TaskInfoMap[taskId].State = Done
+		return true
+	}
+	return false
+}
+
+func (c *Coordinator) AllMapTasksDone() bool {
+	for _, taskInfo := range c.TaskInfoMap {
+		if taskInfo.Ptr.TaskKind == MapTask && taskInfo.State != Done {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *Coordinator) AllReduceTasksDone() bool {
+	for _, taskInfo := range c.TaskInfoMap {
+		if taskInfo.Ptr.TaskKind == ReduceTask && taskInfo.State != Done {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *Coordinator) ProduceMapTasks() {
+	for _, filename := range c.Filenames {
+		task := Task{
+			TaskId:     c.GetNextTaskId(),
+			TaskKind:   MapTask,
+			ReducerNum: c.ReducerNum,
+			Filenames:  []string{filename},
+		}
+
+		taskInfo := TaskInfo{
+			State: Idle,
+			Ptr:   &task,
+		}
+
+		c.TaskInfoMap[task.TaskId] = &taskInfo
+		fmt.Println("[Coordinator] Produce a new map task: ", task)
+		c.MapChan <- &task
+	}
+
+	fmt.Println("[Coordinator] Finish producing map tasks")
+}
+
+func (c *Coordinator) ProduceReduceTasks() {
+	for i := 0; i < c.ReducerNum; i++ {
+		var filenames []string
+		for j := 0; j < c.MapperNum; j++ {
+			filename := fmt.Sprintf("mr-%v-%v", j, i)
+			filenames = append(filenames, filename)
+		}
+
+		task := Task{
+			TaskId:     c.GetNextTaskId(),
+			TaskKind:   ReduceTask,
+			ReducerNum: c.ReducerNum,
+			Filenames:  filenames,
+		}
+
+		taskInfo := TaskInfo{
+			State: Idle,
+			Ptr:   &task,
+		}
+
+		c.TaskInfoMap[task.TaskId] = &taskInfo
+		fmt.Println("[Coordinator] Produce a new reduce task: ", task)
+		c.ReduceChan <- &task
+	}
+
+	fmt.Println("[Coordinator] Finish producing reduce tasks")
+}
+
+func (c *Coordinator) DistributeTask(args *DistributeTaskArgs, reply *DistributeTaskReply) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	switch c.Phase {
+	case MapPhase:
+		var tempTask *Task
+		flag := false
+		for len(c.MapChan) > 0 {
+			tempTask = <-c.MapChan
+			if c.TaskInfoMap[tempTask.TaskId].State == Idle {
+				flag = true
+				break
+			}
+		}
+		if flag {
+			reply.Task = *tempTask
+			if !c.StartTask(reply.Task.TaskId) {
+				fmt.Printf("[Coordinator] Start map task %v repeatedly\n", reply.Task.TaskId)
+			}
+		} else {
+			if c.AllMapTasksDone() {
+				c.ProduceReduceTasks()
+				c.Phase = ReducePhase
+				fmt.Println("[Coordinator] Turn to ", c.Phase)
+			}
+			reply.Task.TaskKind = WaitTask
+		}
+	case ReducePhase:
+		var tempTask *Task
+		flag := false
+		for len(c.ReduceChan) > 0 {
+			tempTask = <-c.ReduceChan
+			if c.TaskInfoMap[tempTask.TaskId].State == Idle {
+				flag = true
+				break
+			}
+		}
+		if flag {
+			reply.Task = *tempTask
+			if !c.StartTask(reply.Task.TaskId) {
+				fmt.Printf("[Coordinator] Start reduce task %v repeatedly\n", reply.Task.TaskId)
+			}
+		} else {
+			if c.AllReduceTasksDone() {
+				c.Phase = EndPhase
+				fmt.Println("[Coordinator] Turn to ", c.Phase)
+			}
+			reply.Task.TaskKind = WaitTask
+		}
+	case EndPhase:
+		reply.Task.TaskKind = EndTask
+	}
+	return nil
+}
+
+func (c *Coordinator) DealTaskDone(args *DealTaskDoneArgs, reply *DealTaskDoneReply) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.EndTask(args.TaskId) {
+		fmt.Printf("[Coordinator] End task %v repeatedly\n", args.TaskId)
+	}
+	return nil
+}
+
+//
+// an example RPC handler.
+//
+// the RPC argument and reply types are defined in rpc.go.
+//
+func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
+	reply.Y = args.X + 1
+	return nil
+}
+
+//
+// start a thread that listens for RPCs from worker.go
+//
+func (c *Coordinator) server() {
+	rpc.Register(c)
+	rpc.HandleHTTP()
+	//l, e := net.Listen("tcp", ":1234")
+	sockname := coordinatorSock()
+	os.Remove(sockname)
+	l, e := net.Listen("unix", sockname)
+	if e != nil {
+		log.Fatal("listen error:", e)
+	}
+	go http.Serve(l, nil)
+}
+
+func (c *Coordinator) DetectCrash() {
+	defer c.mu.Unlock()
+	for {
+		c.mu.Lock()
+		if c.Phase == EndPhase {
+			break
+		}
+		curTime := time.Now()
+		for _, taskInfo := range c.TaskInfoMap {
+			if taskInfo.State != Doing {
+				continue
+			}
+			if curTime.Sub(taskInfo.StartTime) > time.Second*MAX_WAIT_SECOND {
+				taskInfo.State = Idle
+				if c.Phase == MapPhase {
+					c.MapChan <- taskInfo.Ptr
+				} else if c.Phase == ReducePhase {
+					c.ReduceChan <- taskInfo.Ptr
+				}
+			}
+		}
+		c.mu.Unlock()
+		time.Sleep(time.Second)
+	}
+}
+
+//
+// main/mrcoordinator.go calls Done() periodically to find out
+// if the entire job has finished.
+//
+func (c *Coordinator) Done() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.Phase == EndPhase
+}
+
+//
+// create a Coordinator.
+// main/mrcoordinator.go calls this function.
+// nReduce is the number of reduce tasks to use.
+//
+func MakeCoordinator(files []string, nReduce int) *Coordinator {
+	c := Coordinator{
+		Phase:      MapPhase,
+		MapperNum:  len(files),
+		ReducerNum: nReduce,
+		Filenames:  files,
+
+		MapChan:    make(chan *Task, len(files)),
+		ReduceChan: make(chan *Task, nReduce),
+
+		NextTaskId:  0,
+		TaskInfoMap: make(map[int]*TaskInfo),
+	}
+
+	// Your code here.
+
+	c.ProduceMapTasks()
+
+	c.server()
+
+	go c.DetectCrash()
+	return &c
+}
