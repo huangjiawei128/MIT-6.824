@@ -51,19 +51,17 @@ func Worker(mapf func(string, string) []KeyValue,
 		if ok {
 			switch task.TaskKind {
 			case MapTask:
-				fmt.Println("[Worker] Do map task: ", task.TaskId)
+				fmt.Println("[Worker] Do map task:", task.TaskId)
 				DoMapTask(mapf, task)
 				for !InformTaskDone(task) {
 					continue
 				}
 			case ReduceTask:
-				fmt.Println("[Worker] Do reduce task: ", task.TaskId)
+				fmt.Println("[Worker] Do reduce task:", task.TaskId)
 				DoReduceTask(reducef, task)
 				for !InformTaskDone(task) {
 					continue
 				}
-			case WaitTask:
-				fmt.Println("[Worker] Wait for a moment")
 			case EndTask:
 				fmt.Println("[Worker] Stop working")
 				alive = false
@@ -87,7 +85,7 @@ func AskForTask() (*Task, bool) {
 	ok := call("Coordinator.DistributeTask", &args, &reply)
 
 	if ok {
-		fmt.Println("[Worker] Succeed to ask for a task: ", reply.Task)
+		fmt.Println("[Worker] Succeed to ask for a task:", reply.Task)
 	} else {
 		fmt.Println("[Worker] Fail to ask for a task")
 	}

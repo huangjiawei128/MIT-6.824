@@ -28,7 +28,6 @@ type TaskKind int
 const (
 	MapTask = iota
 	ReduceTask
-	WaitTask
 	EndTask
 )
 
@@ -39,8 +38,6 @@ func (taskKind TaskKind) String() string {
 		ret = "MapTask"
 	case ReduceTask:
 		ret = "ReduceTask"
-	case WaitTask:
-		ret = "WaitTask"
 	case EndTask:
 		ret = "EndTask"
 	}

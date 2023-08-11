@@ -63,7 +63,8 @@ type TaskInfo struct {
 
 type Coordinator struct {
 	// Your definitions here.
-	mu sync.Mutex
+	mu   sync.Mutex
+	cond *sync.Cond
 
 	Phase      Phase
 	MapperNum  int
@@ -137,7 +138,7 @@ func (c *Coordinator) ProduceMapTasks() {
 		}
 
 		c.TaskInfoMap[task.TaskId] = &taskInfo
-		fmt.Println("[Coordinator] Produce a new map task: ", task)
+		fmt.Println("[Coordinator] Produce a new map task:", task)
 		c.MapChan <- &task
 	}
 
@@ -165,7 +166,7 @@ func (c *Coordinator) ProduceReduceTasks() {
 		}
 
 		c.TaskInfoMap[task.TaskId] = &taskInfo
-		fmt.Println("[Coordinator] Produce a new reduce task: ", task)
+		fmt.Println("[Coordinator] Produce a new reduce task:", task)
 		c.ReduceChan <- &task
 	}
 
@@ -176,63 +177,68 @@ func (c *Coordinator) DistributeTask(args *DistributeTaskArgs, reply *Distribute
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	switch c.Phase {
-	case MapPhase:
-		var tempTask *Task
-		flag := false
-		for len(c.MapChan) > 0 {
-			tempTask = <-c.MapChan
-			if c.TaskInfoMap[tempTask.TaskId].State == Idle {
+	flag := false
+	for !flag {
+		switch c.Phase {
+		case MapPhase:
+			var tempTask *Task
+			if len(c.MapChan) > 0 {
+				tempTask = <-c.MapChan
 				flag = true
-				break
 			}
-		}
-		if flag {
-			reply.Task = *tempTask
-			if !c.StartTask(reply.Task.TaskId) {
-				fmt.Printf("[Coordinator] Start map task %v repeatedly\n", reply.Task.TaskId)
+			if flag {
+				reply.Task = *tempTask
+				if !c.StartTask(reply.Task.TaskId) {
+					fmt.Printf("[Coordinator] Start map task %v repeatedly\n", reply.Task.TaskId)
+				}
+			} else {
+				for len(c.MapChan) == 0 && !c.AllMapTasksDone() {
+					c.cond.Wait()
+				}
+				if len(c.MapChan) == 0 && c.Phase == MapPhase {
+					c.ProduceReduceTasks()
+					c.Phase = ReducePhase
+					fmt.Println("[Coordinator] Turn to", c.Phase)
+				}
 			}
-		} else {
-			if c.AllMapTasksDone() {
-				c.ProduceReduceTasks()
-				c.Phase = ReducePhase
-				fmt.Println("[Coordinator] Turn to ", c.Phase)
-			}
-			reply.Task.TaskKind = WaitTask
-		}
-	case ReducePhase:
-		var tempTask *Task
-		flag := false
-		for len(c.ReduceChan) > 0 {
-			tempTask = <-c.ReduceChan
-			if c.TaskInfoMap[tempTask.TaskId].State == Idle {
+		case ReducePhase:
+			var tempTask *Task
+			if len(c.ReduceChan) > 0 {
+				tempTask = <-c.ReduceChan
 				flag = true
-				break
 			}
+			if flag {
+				reply.Task = *tempTask
+				if !c.StartTask(reply.Task.TaskId) {
+					fmt.Printf("[Coordinator] Start reduce task %v repeatedly\n", reply.Task.TaskId)
+				}
+			} else {
+				for len(c.ReduceChan) == 0 && !c.AllReduceTasksDone() {
+					c.cond.Wait()
+				}
+				if len(c.ReduceChan) == 0 && c.Phase == ReducePhase {
+					c.Phase = EndPhase
+					fmt.Println("[Coordinator] Turn to", c.Phase)
+				}
+			}
+		case EndPhase:
+			flag = true
+			reply.Task.TaskKind = EndTask
 		}
-		if flag {
-			reply.Task = *tempTask
-			if !c.StartTask(reply.Task.TaskId) {
-				fmt.Printf("[Coordinator] Start reduce task %v repeatedly\n", reply.Task.TaskId)
-			}
-		} else {
-			if c.AllReduceTasksDone() {
-				c.Phase = EndPhase
-				fmt.Println("[Coordinator] Turn to ", c.Phase)
-			}
-			reply.Task.TaskKind = WaitTask
-		}
-	case EndPhase:
-		reply.Task.TaskKind = EndTask
 	}
+
 	return nil
 }
 
 func (c *Coordinator) DealTaskDone(args *DealTaskDoneArgs, reply *DealTaskDoneReply) error {
+	//	fmt.Println("[Coordinator] TaskDone dealer tries to get lock")
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.EndTask(args.TaskId) {
 		fmt.Printf("[Coordinator] End task %v repeatedly\n", args.TaskId)
+	} else {
+		fmt.Println("[Coordinator] Notify all wait routines when task has been done")
+		c.cond.Broadcast()
 	}
 	return nil
 }
@@ -266,11 +272,13 @@ func (c *Coordinator) server() {
 func (c *Coordinator) DetectCrash() {
 	defer c.mu.Unlock()
 	for {
+		//	fmt.Println("[Coordinator] Crash detector tries to get lock")
 		c.mu.Lock()
 		if c.Phase == EndPhase {
 			break
 		}
 		curTime := time.Now()
+		crash := false
 		for _, taskInfo := range c.TaskInfoMap {
 			if taskInfo.State != Doing {
 				continue
@@ -282,7 +290,12 @@ func (c *Coordinator) DetectCrash() {
 				} else if c.Phase == ReducePhase {
 					c.ReduceChan <- taskInfo.Ptr
 				}
+				crash = true
 			}
+		}
+		if crash {
+			fmt.Println("[Coordinator] Notify all wait routines when crash happens")
+			c.cond.Broadcast()
 		}
 		c.mu.Unlock()
 		time.Sleep(time.Second)
@@ -317,6 +330,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		NextTaskId:  0,
 		TaskInfoMap: make(map[int]*TaskInfo),
 	}
+	c.cond = sync.NewCond(&c.mu)
 
 	// Your code here.
 
