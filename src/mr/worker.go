@@ -43,10 +43,9 @@ func ihash(key string) int {
 //
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
-	alive := true
 
 	// Your worker implementation here.
-	for alive {
+	for {
 		task, ok := AskForTask()
 		if ok {
 			switch task.TaskKind {
@@ -63,14 +62,15 @@ func Worker(mapf func(string, string) []KeyValue,
 					continue
 				}
 			case EndTask:
-				fmt.Println("[Worker] Stop working")
-				alive = false
+				fmt.Println("[Worker] Stop working (receive end task)")
+				break
 			}
+		} else {
+			fmt.Println("[Worker] Stop working (fail to contact with coordinator)")
+			break
 		}
 
-		if !ok || task.TaskId != EndTask {
-			time.Sleep(time.Second)
-		}
+		time.Sleep(time.Second)
 	}
 
 	// uncomment to send the Example RPC to the coordinator.
