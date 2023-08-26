@@ -18,7 +18,6 @@ package raft
 //
 
 import (
-	"fmt"
 	//	"bytes"
 	"sync"
 	"sync/atomic"
@@ -208,8 +207,8 @@ type RequestVoteReply struct {
 type AppendEntriesArgs struct {
 	Term         int
 	LeaderId     int
-	prevLogIndex int
-	prevLogTerm  int
+	PrevLogIndex int
+	PrevLogTerm  int
 	Entries      []LogEntry
 	LeaderCommit int
 }
@@ -224,7 +223,7 @@ type AppendEntriesReply struct {
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
-	fmt.Printf("[Server %v] Receive RequestVote RPC from server %v", rf.me, args.CandidateId)
+	DPrintf("[Server %v] Receive RequestVote RPC from server %v\n", rf.me, args.CandidateId)
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -250,7 +249,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	// Your code here (2A, 2B).
-	fmt.Printf("[Server %v] Receive AppendEntries RPC from server %v", rf.me, args.LeaderId)
+	DPrintf("[Server %v] Receive AppendEntries RPC from server %v\n", rf.me, args.LeaderId)
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -298,19 +297,19 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 // the struct itself.
 //
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	fmt.Printf("[Server %v] Send RequestVote RPC to server %v", rf.me, server)
+	DPrintf("[Server %v] Send RequestVote RPC to server %v\n", rf.me, server)
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	if ok {
-		fmt.Printf("[Server %v] Receive RequestVote ACK from server %v", rf.me, server)
+		DPrintf("[Server %v] Receive RequestVote ACK from server %v\n", rf.me, server)
 	}
 	return ok
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
-	fmt.Printf("[Server %v] Send AppendEntries RPC to server %v", rf.me, server)
+	DPrintf("[Server %v] Send AppendEntries RPC to server %v\n", rf.me, server)
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	if ok {
-		fmt.Printf("[Server %v] Receive AppendEntries RPC ack from server %v", rf.me, server)
+		DPrintf("[Server %v] Receive AppendEntries RPC ack from server %v\n", rf.me, server)
 	}
 	return ok
 }
@@ -368,7 +367,10 @@ func (rf *Raft) electionTicker() {
 		// Your code here to check if a leader election should
 		// be started and to randomize sleeping time using
 		// time.Sleep().
-		time.Sleep((rf.timeout >> 2) * time.Millisecond)
+		rf.mu.Lock()
+		sleepTime := rf.timeout
+		rf.mu.Unlock()
+		time.Sleep(sleepTime)
 
 		rf.mu.Lock()
 		if rf.role == Leader || !rf.TimeoutElapses() {
@@ -421,10 +423,6 @@ func (rf *Raft) electionTicker() {
 
 func (rf *Raft) heartbeatTicker() {
 	for rf.killed() == false {
-
-		// Your code here to check if a leader election should
-		// be started and to randomize sleeping time using
-		// time.Sleep().
 		time.Sleep(HeartbeatPeriod * time.Millisecond)
 
 		rf.mu.Lock()

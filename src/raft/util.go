@@ -1,7 +1,6 @@
 package raft
 
 import (
-	"fmt"
 	"log"
 	"math/rand"
 	"time"
@@ -24,6 +23,7 @@ const (
 )
 
 func (rf *Raft) ResetTimeout() {
+	rand.Seed(time.Now().Unix())
 	rf.timeout = time.Duration(MinTimeout+rand.Intn(MaxTimeout-MinTimeout)) * time.Millisecond
 }
 
@@ -39,7 +39,7 @@ func (rf *Raft) DiscoverNewTerm(term int) {
 	oriRole := rf.role
 	rf.role = Follower
 	rf.voteNum = 0
-	fmt.Printf("[Server %v] %v -> Follower, term: %v (discover new term)", rf.me, oriRole, rf.currentTerm)
+	DPrintf("[Server %v] %v -> Follower, term: %v (discover new term)\n", rf.me, oriRole, rf.currentTerm)
 }
 
 func (rf *Raft) StartElection() {
@@ -50,13 +50,13 @@ func (rf *Raft) StartElection() {
 	oriRole := rf.role
 	rf.role = Candidate
 	rf.voteNum = 0
-	fmt.Printf("[Server %v] %v -> Candidate, term: %v (start election)", rf.me, oriRole, rf.currentTerm)
+	DPrintf("[Server %v] %v -> Candidate, term: %v (start election)\n", rf.me, oriRole, rf.currentTerm)
 }
 
 func (rf *Raft) BecomeLeader() {
 	oriRole := rf.role
 	rf.role = Leader
-	fmt.Printf("[Server %v] %v -> Leader, term: %v", rf.me, oriRole, rf.currentTerm)
+	DPrintf("[Server %v] %v -> Leader, term: %v\n", rf.me, oriRole, rf.currentTerm)
 }
 
 func (rf *Raft) GetLastLogInfo() (int, int) {
