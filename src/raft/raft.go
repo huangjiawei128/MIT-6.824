@@ -18,6 +18,7 @@ package raft
 //
 
 import (
+	"math/rand"
 	//	"bytes"
 	"sync"
 	"sync/atomic"
@@ -490,10 +491,12 @@ func (rf *Raft) heartbeatTicker() {
 //
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
+
 	rf := &Raft{}
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
+	rand.Seed(time.Now().Unix() + int64(rf.me))
 
 	// Your initialization code here (2A, 2B, 2C).
 	rf.currentTerm = 0

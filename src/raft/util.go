@@ -18,13 +18,14 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 
 const (
 	MinTimeout      = 250
-	MaxTimeout      = 400
+	MaxTimeout      = 600
 	HeartbeatPeriod = 100
 )
 
 func (rf *Raft) RandomTimeout() time.Duration {
-	rand.Seed(time.Now().Unix())
-	return time.Duration(MinTimeout+rand.Intn(MaxTimeout-MinTimeout)) * time.Millisecond
+	timeout := time.Duration(MinTimeout+rand.Intn(MaxTimeout-MinTimeout)) * time.Millisecond
+	//	DPrintf("S%v: %v\n", rf.me, timeout)
+	return timeout
 }
 
 func (rf *Raft) ResetElectionTimer() {
