@@ -7,7 +7,7 @@ import (
 )
 
 // Debugging
-const Debug = false
+const Debug = true
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug {
@@ -22,41 +22,43 @@ const (
 	HeartbeatPeriod = 100
 )
 
-func (rf *Raft) ResetTimeout() {
+func (rf *Raft) RandomTimeout() time.Duration {
 	rand.Seed(time.Now().Unix())
-	rf.timeout = time.Duration(MinTimeout+rand.Intn(MaxTimeout-MinTimeout)) * time.Millisecond
+	return time.Duration(MinTimeout+rand.Intn(MaxTimeout-MinTimeout)) * time.Millisecond
 }
 
-func (rf *Raft) ResetInitialTime() {
-	rf.initialTime = time.Now()
+func (rf *Raft) ResetElectionTimer() {
+	rf.electionTimer.Reset(rf.RandomTimeout())
 }
 
 func (rf *Raft) DiscoverNewTerm(term int) {
+	oriTerm := rf.currentTerm
 	rf.currentTerm = term
 	rf.votedFor = -1
-	rf.ResetTimeout()
-	rf.ResetInitialTime()
+	rf.ResetElectionTimer()
 	oriRole := rf.role
 	rf.role = Follower
 	rf.voteNum = 0
-	DPrintf("[Server %v] %v -> Follower, term: %v (discover new term)\n", rf.me, oriRole, rf.currentTerm)
+	DPrintf("[S%v Raft.DiscoverNewTerm] role: %v -> Follower | term: %v -> %v (discover new term)\n",
+		rf.me, oriRole, oriTerm, rf.currentTerm)
 }
 
 func (rf *Raft) StartElection() {
+	oriTerm := rf.currentTerm
 	rf.currentTerm++
 	rf.votedFor = rf.me
-	rf.ResetTimeout()
-	rf.ResetInitialTime()
+	rf.ResetElectionTimer()
 	oriRole := rf.role
 	rf.role = Candidate
-	rf.voteNum = 0
-	DPrintf("[Server %v] %v -> Candidate, term: %v (start election)\n", rf.me, oriRole, rf.currentTerm)
+	rf.voteNum = 1
+	DPrintf("[S%v Raft.StartElection] role: %v -> Candidate | term: %v -> %v (start election)\n",
+		rf.me, oriRole, oriTerm, rf.currentTerm)
 }
 
 func (rf *Raft) BecomeLeader() {
 	oriRole := rf.role
 	rf.role = Leader
-	DPrintf("[Server %v] %v -> Leader, term: %v\n", rf.me, oriRole, rf.currentTerm)
+	DPrintf("[S%v Raft.BecomeLeader] role: %v -> Leader | term: %v\n", rf.me, oriRole, rf.currentTerm)
 }
 
 func (rf *Raft) GetLastLogInfo() (int, int) {
@@ -74,8 +76,4 @@ func (rf *Raft) UpToDate(index int, term int) bool {
 		return term > lastLogTerm
 	}
 	return index >= lastLogIndex
-}
-
-func (rf *Raft) TimeoutElapses() bool {
-	return time.Now().Sub(rf.initialTime) > rf.timeout
 }
