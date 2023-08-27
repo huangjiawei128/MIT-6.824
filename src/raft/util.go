@@ -16,50 +16,57 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 	return
 }
 
+func (rf *Raft) DPrintf(format string, a ...interface{}) (n int, err error) {
+	if !rf.killed() {
+		DPrintf(format, a...)
+	}
+	return
+}
+
 const (
 	MinTimeout      = 250
-	MaxTimeout      = 600
+	MaxTimeout      = 500
 	HeartbeatPeriod = 100
 )
 
 func (rf *Raft) RandomTimeout() time.Duration {
 	timeout := time.Duration(MinTimeout+rand.Intn(MaxTimeout-MinTimeout)) * time.Millisecond
-	//	DPrintf("S%v: %v\n", rf.me, timeout)
 	return timeout
 }
 
-func (rf *Raft) ResetElectionTimer() {
-	rf.electionTimer.Reset(rf.RandomTimeout())
+func (rf *Raft) ResetInitialTime() {
+	rf.initialTime = time.Now()
 }
 
 func (rf *Raft) DiscoverNewTerm(term int) {
 	oriTerm := rf.currentTerm
 	rf.currentTerm = term
 	rf.votedFor = -1
-	rf.ResetElectionTimer()
+	rf.ResetInitialTime()
 	oriRole := rf.role
 	rf.role = Follower
 	rf.voteNum = 0
-	DPrintf("[S%v Raft.DiscoverNewTerm] role: %v -> Follower | term: %v -> %v (discover new term)\n",
-		rf.me, oriRole, oriTerm, rf.currentTerm)
+	rf.DPrintf("[S%v T%v->T%v Raft.DiscoverNewTerm] role: %v -> Follower (discover new term)\n",
+		rf.me, oriTerm, rf.currentTerm, oriRole)
 }
 
 func (rf *Raft) StartElection() {
 	oriTerm := rf.currentTerm
 	rf.currentTerm++
 	rf.votedFor = rf.me
-	rf.ResetElectionTimer()
+	rf.ResetInitialTime()
 	oriRole := rf.role
 	rf.role = Candidate
 	rf.voteNum = 1
-	DPrintf("[S%v Raft.StartElection] role: %v -> Candidate | term: %v -> %v (start election)\n",
-		rf.me, oriRole, oriTerm, rf.currentTerm)
+	rf.DPrintf("[S%v T%v->T%v Raft.StartElection] role: %v -> Candidate (start election)\n",
+		rf.me, oriTerm, rf.currentTerm, oriRole)
 }
 
 func (rf *Raft) BecomeLeader() {
 	oriRole := rf.role
 	rf.role = Leader
-	DPrintf("[S%v Raft.BecomeLeader] role: %v -> Leader | term: %v\n", rf.me, oriRole, rf.currentTerm)
+	rf.DPrintf("[S%v T%v Raft.BecomeLeader] role: %v -> Leader\n",
+		rf.me, rf.currentTerm, oriRole)
 }
 
 func (rf *Raft) GetLastLogInfo() (int, int) {

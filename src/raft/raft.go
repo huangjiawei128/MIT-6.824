@@ -105,10 +105,10 @@ type Raft struct {
 	matchIndex []int
 
 	// Other state
-	electionTimer *time.Timer
-	role          Role
-	voteNum       int
-	applyCh       chan ApplyMsg
+	initialTime time.Time
+	role        Role
+	voteNum     int
+	applyCh     chan ApplyMsg
 }
 
 // return currentTerm and whether this server
@@ -225,12 +225,13 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	DPrintf("[S%v Raft.RequestVote] Receive RequestVote RPC from S%v\n", rf.me, args.CandidateId)
+	rf.DPrintf("[S%v T%v Raft.RequestVote] Receive RequestVote RPC from S%v\n",
+		rf.me, rf.currentTerm, args.CandidateId)
 
 	if args.Term < rf.currentTerm {
 		reply.VoteGranted = false
-		DPrintf("[S%v Raft.RequestVote] Refuse to vote for S%v (have ahead term: %v VS %v)\n",
-			rf.me, args.CandidateId, rf.currentTerm, args.Term)
+		rf.DPrintf("[S%v T%v Raft.RequestVote] Refuse to vote for S%v (have ahead term: %v VS %v)\n",
+			rf.me, rf.currentTerm, args.CandidateId, rf.currentTerm, args.Term)
 	} else {
 		if args.Term > rf.currentTerm {
 			rf.DiscoverNewTerm(args.Term)
@@ -238,19 +239,21 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 		if rf.votedFor != -1 && rf.votedFor != args.CandidateId {
 			reply.VoteGranted = false
-			DPrintf("[S%v Raft.RequestVote] Refuse to vote for S%v (have already voted for S%v)\n",
-				rf.me, args.CandidateId, rf.votedFor)
+			rf.DPrintf("[S%v T%v Raft.RequestVote] Refuse to vote for S%v (have already voted for S%v)\n",
+				rf.me, rf.currentTerm, args.CandidateId, rf.votedFor)
 		} else if !rf.UpToDate(args.LastLogIndex, args.LastLogTerm) {
 			reply.VoteGranted = false
 			lastLogIndex, lastLogTerm := rf.GetLastLogInfo()
-			DPrintf("[S%v Raft.RequestVote] Refuse to vote for S%v "+
+			rf.DPrintf("[S%v T%v Raft.RequestVote] Refuse to vote for S%v "+
 				"(have ahead (lastLogIndex,lastLogTerm): (%v,%v) VS (%v,%v))\n",
-				rf.me, args.CandidateId, lastLogIndex, lastLogTerm, args.LastLogIndex, args.LastLogTerm)
+				rf.me, rf.currentTerm, args.CandidateId,
+				lastLogIndex, lastLogTerm, args.LastLogIndex, args.LastLogTerm)
 		} else {
 			rf.votedFor = args.CandidateId
-			rf.ResetElectionTimer()
+			rf.ResetInitialTime()
 			reply.VoteGranted = true
-			DPrintf("[Server %v Raft.RequestVote] Vote for S%v\n", rf.me, args.CandidateId)
+			rf.DPrintf("[S%v T%v Raft.RequestVote] Vote for S%v\n",
+				rf.me, rf.currentTerm, args.CandidateId)
 		}
 	}
 	reply.Term = rf.currentTerm
@@ -260,7 +263,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	DPrintf("[S%v Raft.AppendEntries] Receive AppendEntries RPC from S%v\n", rf.me, args.LeaderId)
+	rf.DPrintf("[S%v T%v Raft.AppendEntries] Receive AppendEntries RPC from S%v\n",
+		rf.me, rf.currentTerm, args.LeaderId)
 
 	if args.Term < rf.currentTerm {
 		reply.Success = false
@@ -268,8 +272,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		if args.Term > rf.currentTerm {
 			rf.DiscoverNewTerm(args.Term)
 		}
+		rf.ResetInitialTime()
 		reply.Success = true
-		rf.ResetElectionTimer()
 		//	TODO: just for 2A
 	}
 	reply.Term = rf.currentTerm
@@ -305,28 +309,42 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 // the struct itself.
 //
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	DPrintf("[S%v Raft.sendRequestVote] Send RequestVote RPC to S%v\n", rf.me, server)
+	rf.mu.Lock()
+	rf.DPrintf("[S%v T%v Raft.sendRequestVote] Send RequestVote RPC to S%v\n",
+		rf.me, rf.currentTerm, server)
+	rf.mu.Unlock()
+
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
+
+	rf.mu.Lock()
 	if ok {
-		DPrintf("[S%v Raft.sendRequestVote] Receive RequestVote ACK from S%v | voteGranted: %v\n",
-			rf.me, server, reply.VoteGranted)
+		rf.DPrintf("[S%v T%v Raft.sendRequestVote] Receive RequestVote ACK from S%v | voteGranted: %v\n",
+			rf.me, rf.currentTerm, server, reply.VoteGranted)
 	} else {
-		DPrintf("[S%v Raft.sendRequestVote] Fail to receive RequestVote ACK from S%v\n",
-			rf.me, server)
+		rf.DPrintf("[S%v T%v Raft.sendRequestVote] Fail to receive RequestVote ACK from S%v\n",
+			rf.me, rf.currentTerm, server)
 	}
+	rf.mu.Unlock()
 	return ok
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
-	DPrintf("[S%v Raft.sendAppendEntries] Send AppendEntries RPC to S%v\n", rf.me, server)
+	rf.mu.Lock()
+	rf.DPrintf("[S%v T%v Raft.sendAppendEntries] Send AppendEntries RPC to S%v\n",
+		rf.me, rf.currentTerm, server)
+	rf.mu.Unlock()
+
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+
+	rf.mu.Lock()
 	if ok {
-		DPrintf("[S%v Raft.sendAppendEntries] Receive AppendEntries ACK from S%v | success: %v\n",
-			rf.me, server, reply.Success)
+		rf.DPrintf("[S%v T%v Raft.sendAppendEntries] Receive AppendEntries ACK from S%v | success: %v\n",
+			rf.me, rf.currentTerm, server, reply.Success)
 	} else {
-		DPrintf("[S%v Raft.sendAppendEntries] Fail to receive AppendEntries ACK from S%v\n",
-			rf.me, server)
+		rf.DPrintf("[S%v T%v Raft.sendAppendEntries] Fail to receive AppendEntries ACK from S%v\n",
+			rf.me, rf.currentTerm, server)
 	}
+	rf.mu.Unlock()
 	return ok
 }
 
@@ -383,41 +401,55 @@ func (rf *Raft) electionTicker() {
 		// Your code here to check if a leader election should
 		// be started and to randomize sleeping time using
 		// time.Sleep().
-		<-rf.electionTimer.C
-		rf.ResetElectionTimer()
+		sleepTime := rf.RandomTimeout()
+		rf.DPrintf("[S%v] sleep time: %v\n", rf.me, sleepTime)
+		tempTime := time.Now()
+		time.Sleep(sleepTime)
+		//_sleepTime := syscall.NsecToTimespec(int64(sleepTime))
+		//syscall.Nanosleep(&_sleepTime, nil)
+
+		//rf.DPrintf("[S%v->ALL] span after sleeping: %v\n",
+		//	rf.me, time.Now().Sub(tempTime))
 
 		rf.mu.Lock()
-		if rf.role == Leader {
+		if rf.role == Leader || rf.initialTime.After(tempTime) {
 			rf.mu.Unlock()
 			continue
 		}
+		//rf.DPrintf("[S%v->ALL T%v] span before election: %v\n",
+		//	rf.me, rf.currentTerm, time.Now().Sub(tempTime))
 		rf.StartElection()
-		rf.mu.Unlock()
 
+		requestVoteArgs := RequestVoteArgs{
+			Term:        rf.currentTerm,
+			CandidateId: rf.me,
+		}
+		requestVoteArgs.LastLogIndex, requestVoteArgs.LastLogTerm = rf.GetLastLogInfo()
+
+		//rf.DPrintf("[S%v->ALL T%v] span before creating go routines: %v\n",
+		//	rf.me, requestVoteArgs.Term, time.Now().Sub(tempTime))
 		for server := range rf.peers {
 			if server == rf.me {
 				continue
 			}
 			go func(server int) {
+				//rf.DPrintf("[S%v->S%v T%v] span before sending: %v\n",
+				//	rf.me, server, requestVoteArgs.Term, time.Now().Sub(tempTime))
 				rf.mu.Lock()
-				if rf.role != Candidate {
-					rf.mu.Unlock()
-					return
-				}
-				requestVoteArgs := RequestVoteArgs{
-					Term:        rf.currentTerm,
-					CandidateId: rf.me,
-				}
-				requestVoteArgs.LastLogIndex, requestVoteArgs.LastLogTerm =
-					rf.GetLastLogInfo()
 				requestVoteReply := RequestVoteReply{}
 				rf.mu.Unlock()
 
 				ok := rf.sendRequestVote(server, &requestVoteArgs, &requestVoteReply)
+				//rf.DPrintf("[S%v->S%v T%v] span after sending: %v\n",
+				//	rf.me, server, requestVoteArgs.Term, time.Now().Sub(tempTime))
 
 				if ok {
 					rf.mu.Lock()
 					defer rf.mu.Unlock()
+					if rf.role != Candidate || rf.currentTerm != requestVoteArgs.Term {
+						return
+					}
+
 					if requestVoteReply.Term > rf.currentTerm {
 						rf.DiscoverNewTerm(requestVoteReply.Term)
 						return
@@ -425,13 +457,14 @@ func (rf *Raft) electionTicker() {
 
 					if requestVoteReply.VoteGranted {
 						rf.voteNum++
-						if rf.role != Leader && rf.voteNum > len(rf.peers)>>1 {
+						if rf.voteNum > len(rf.peers)>>1 {
 							rf.BecomeLeader()
 						}
 					}
 				}
 			}(server)
 		}
+		rf.mu.Unlock()
 	}
 }
 
@@ -444,7 +477,11 @@ func (rf *Raft) heartbeatTicker() {
 			rf.mu.Unlock()
 			continue
 		}
-		rf.mu.Unlock()
+
+		appendEntriesArgs := AppendEntriesArgs{
+			Term:     rf.currentTerm,
+			LeaderId: rf.me,
+		}
 
 		for server := range rf.peers {
 			if server == rf.me {
@@ -452,14 +489,6 @@ func (rf *Raft) heartbeatTicker() {
 			}
 			go func(server int) {
 				rf.mu.Lock()
-				if rf.role != Leader {
-					rf.mu.Unlock()
-					return
-				}
-				appendEntriesArgs := AppendEntriesArgs{
-					Term:     rf.currentTerm,
-					LeaderId: rf.me,
-				}
 				appendEntriesReply := AppendEntriesReply{}
 				rf.mu.Unlock()
 
@@ -468,6 +497,10 @@ func (rf *Raft) heartbeatTicker() {
 				if ok {
 					rf.mu.Lock()
 					defer rf.mu.Unlock()
+					if rf.role != Leader || rf.currentTerm != appendEntriesArgs.Term {
+						return
+					}
+
 					if appendEntriesReply.Term > rf.currentTerm {
 						rf.DiscoverNewTerm(appendEntriesReply.Term)
 						return
@@ -475,6 +508,7 @@ func (rf *Raft) heartbeatTicker() {
 				}
 			}(server)
 		}
+		rf.mu.Unlock()
 	}
 }
 
@@ -509,7 +543,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
 
-	rf.electionTimer = time.NewTimer(rf.RandomTimeout())
+	rf.ResetInitialTime()
 	rf.role = Follower
 	rf.applyCh = applyCh
 
