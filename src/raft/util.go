@@ -27,11 +27,18 @@ const (
 	MinTimeout      = 250
 	MaxTimeout      = 500
 	HeartbeatPeriod = 100
+	CommitPeriod    = 10
 )
 
-func (rf *Raft) RandomTimeout() time.Duration {
-	timeout := time.Duration(MinTimeout+rand.Intn(MaxTimeout-MinTimeout)) * time.Millisecond
-	return timeout
+func Min(x int, y int) int {
+	if x < y {
+		return x
+	}
+	return y
+}
+
+func RandomTimeout() time.Duration {
+	return time.Duration(MinTimeout+rand.Intn(MaxTimeout-MinTimeout)) * time.Millisecond
 }
 
 func (rf *Raft) ResetInitialTime() {
@@ -69,8 +76,12 @@ func (rf *Raft) BecomeLeader() {
 		rf.me, rf.currentTerm, oriRole)
 }
 
+func (rf *Raft) GetLastLogIndex() int {
+	return len(rf.log) - 1
+}
+
 func (rf *Raft) GetLastLogInfo() (int, int) {
-	lastLogIndex := len(rf.log) - 1
+	lastLogIndex := rf.GetLastLogIndex()
 	lastLogTerm := 0
 	if lastLogIndex >= 0 {
 		lastLogTerm = rf.log[lastLogIndex].Term
@@ -84,4 +95,11 @@ func (rf *Raft) UpToDate(index int, term int) bool {
 		return term > lastLogTerm
 	}
 	return index >= lastLogIndex
+}
+
+func (rf *Raft) MatchTerm(index int, term int) bool {
+	if index > rf.GetLastLogIndex() {
+		return false
+	}
+	return rf.log[index].Term == term
 }

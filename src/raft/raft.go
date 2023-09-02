@@ -18,6 +18,7 @@ package raft
 //
 
 import (
+	"fmt"
 	"math/rand"
 	//	"bytes"
 	"sync"
@@ -228,35 +229,43 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.DPrintf("[S%v T%v Raft.RequestVote] Receive RequestVote RPC from S%v\n",
 		rf.me, rf.currentTerm, args.CandidateId)
 
+	reply.VoteGranted = true
+	reply.Term = rf.currentTerm
+
 	if args.Term < rf.currentTerm {
 		reply.VoteGranted = false
 		rf.DPrintf("[S%v T%v Raft.RequestVote] Refuse to vote for S%v (have ahead term: %v VS %v)\n",
 			rf.me, rf.currentTerm, args.CandidateId, rf.currentTerm, args.Term)
-	} else {
-		if args.Term > rf.currentTerm {
-			rf.DiscoverNewTerm(args.Term)
-		}
-
-		if rf.votedFor != -1 && rf.votedFor != args.CandidateId {
-			reply.VoteGranted = false
-			rf.DPrintf("[S%v T%v Raft.RequestVote] Refuse to vote for S%v (have already voted for S%v)\n",
-				rf.me, rf.currentTerm, args.CandidateId, rf.votedFor)
-		} else if !rf.UpToDate(args.LastLogIndex, args.LastLogTerm) {
-			reply.VoteGranted = false
-			lastLogIndex, lastLogTerm := rf.GetLastLogInfo()
-			rf.DPrintf("[S%v T%v Raft.RequestVote] Refuse to vote for S%v "+
-				"(have ahead (lastLogIndex,lastLogTerm): (%v,%v) VS (%v,%v))\n",
-				rf.me, rf.currentTerm, args.CandidateId,
-				lastLogIndex, lastLogTerm, args.LastLogIndex, args.LastLogTerm)
-		} else {
-			rf.votedFor = args.CandidateId
-			rf.ResetInitialTime()
-			reply.VoteGranted = true
-			rf.DPrintf("[S%v T%v Raft.RequestVote] Vote for S%v\n",
-				rf.me, rf.currentTerm, args.CandidateId)
-		}
+		return
 	}
-	reply.Term = rf.currentTerm
+
+	if args.Term > rf.currentTerm {
+		rf.DiscoverNewTerm(args.Term)
+		reply.Term = rf.currentTerm
+	}
+
+	if rf.votedFor != -1 && rf.votedFor != args.CandidateId {
+		reply.VoteGranted = false
+		rf.DPrintf("[S%v T%v Raft.RequestVote] Refuse to vote for S%v (have already voted for S%v)\n",
+			rf.me, rf.currentTerm, args.CandidateId, rf.votedFor)
+		return
+	}
+
+	if !rf.UpToDate(args.LastLogIndex, args.LastLogTerm) {
+		reply.VoteGranted = false
+		lastLogIndex, lastLogTerm := rf.GetLastLogInfo()
+		rf.DPrintf("[S%v T%v Raft.RequestVote] Refuse to vote for S%v "+
+			"(have ahead (lastLogIndex,lastLogTerm): (%v,%v) VS (%v,%v))\n",
+			rf.me, rf.currentTerm, args.CandidateId,
+			lastLogIndex, lastLogTerm, args.LastLogIndex, args.LastLogTerm)
+		return
+	}
+
+	rf.votedFor = args.CandidateId
+	rf.ResetInitialTime()
+	reply.VoteGranted = true
+	rf.DPrintf("[S%v T%v Raft.RequestVote] Vote for S%v\n",
+		rf.me, rf.currentTerm, args.CandidateId)
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
@@ -266,17 +275,32 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.DPrintf("[S%v T%v Raft.AppendEntries] Receive AppendEntries RPC from S%v\n",
 		rf.me, rf.currentTerm, args.LeaderId)
 
+	reply.Success = true
+	reply.Term = rf.currentTerm
+
 	if args.Term < rf.currentTerm {
 		reply.Success = false
-	} else {
-		if args.Term > rf.currentTerm {
-			rf.DiscoverNewTerm(args.Term)
-		}
-		rf.ResetInitialTime()
-		reply.Success = true
-		//	TODO: just for 2A
+		return
 	}
-	reply.Term = rf.currentTerm
+	rf.ResetInitialTime()
+
+	if args.Term > rf.currentTerm {
+		rf.DiscoverNewTerm(args.Term)
+		reply.Term = rf.currentTerm
+	}
+
+	if !rf.MatchTerm(args.PrevLogIndex, args.PrevLogTerm) {
+		reply.Success = false
+		rf.log = rf.log[:Min(len(rf.log), args.PrevLogIndex)]
+		return
+	}
+
+	rf.log = append(rf.log[:args.PrevLogIndex+1], args.Entries...)
+
+	lastLogIndex := rf.GetLastLogIndex()
+	if args.LeaderCommit > rf.commitIndex {
+		rf.commitIndex = Min(args.LeaderCommit, lastLogIndex)
+	}
 }
 
 //
@@ -365,9 +389,27 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	index := -1
 	term := -1
-	isLeader := true
+	isLeader := false
 
 	// Your code here (2B).
+	rf.mu.Lock()
+	defer rf.mu.Lock()
+
+	if rf.role != Leader {
+		rf.DPrintf("[S%v T%v Raft.Start] Fail to append the command \"%v\" (isn't the leader)\n",
+			rf.me, rf.currentTerm, command)
+	} else if !rf.killed() {
+		index = len(rf.log)
+		term = rf.currentTerm
+		isLeader = true
+		logEntry := LogEntry{
+			Command: command,
+			Term:    term,
+		}
+		rf.log = append(rf.log, logEntry)
+		rf.DPrintf("[S%v T%v Raft.Start] Append the command \"%v\" | index: %v\n",
+			rf.me, rf.currentTerm, command, index)
+	}
 
 	return index, term, isLeader
 }
@@ -395,14 +437,14 @@ func (rf *Raft) killed() bool {
 
 // The ticker go routine starts a new election if this peer hasn't received
 // heartsbeats recently.
-func (rf *Raft) electionTicker() {
+func (rf *Raft) electTicker() {
 	for rf.killed() == false {
 
 		// Your code here to check if a leader election should
 		// be started and to randomize sleeping time using
 		// time.Sleep().
-		sleepTime := rf.RandomTimeout()
-		rf.DPrintf("[S%v] sleep time: %v\n", rf.me, sleepTime)
+		sleepTime := RandomTimeout()
+		rf.DPrintf("[S%v] election timeout: %v\n", rf.me, sleepTime)
 		tempTime := time.Now()
 		time.Sleep(sleepTime)
 		//_sleepTime := syscall.NsecToTimespec(int64(sleepTime))
@@ -468,7 +510,7 @@ func (rf *Raft) electionTicker() {
 	}
 }
 
-func (rf *Raft) heartbeatTicker() {
+func (rf *Raft) appendTicker() {
 	for rf.killed() == false {
 		time.Sleep(HeartbeatPeriod * time.Millisecond)
 
@@ -512,6 +554,44 @@ func (rf *Raft) heartbeatTicker() {
 	}
 }
 
+func (rf *Raft) commitTicker() {
+	for rf.killed() == false {
+		time.Sleep(CommitPeriod * time.Millisecond)
+
+		rf.mu.Lock()
+		if rf.lastApplied > rf.commitIndex {
+			errorMsg := fmt.Sprintf("[S%v T%v Raft.commitTikcer] lastApplied > commitIndex\n",
+				rf.me, rf.currentTerm)
+			rf.mu.Unlock()
+			panic(errorMsg)
+		}
+
+		if rf.commitIndex > rf.GetLastLogIndex() {
+			errorMsg := fmt.Sprintf("[S%v T%v Raft.commitTikcer] commitIndex > lastLogIndex\n",
+				rf.me, rf.currentTerm)
+			rf.mu.Unlock()
+			panic(errorMsg)
+		}
+
+		applyMsgs := make([]ApplyMsg, 0)
+		for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
+			command := rf.log[i].Command
+			applyMsg := ApplyMsg{
+				CommandValid: true,
+				Command:      command,
+				CommandIndex: i,
+			}
+			applyMsgs = append(applyMsgs, applyMsg)
+		}
+		rf.lastApplied = rf.commitIndex
+		rf.mu.Unlock()
+
+		for _, applyMsg := range applyMsgs {
+			rf.applyCh <- applyMsg
+		}
+	}
+}
+
 //
 // the service or tester wants to create a Raft server. the ports
 // of all the Raft servers (including this one) are in peers[]. this
@@ -551,8 +631,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.readPersist(persister.ReadRaftState())
 
 	// start ticker goroutine to start elections
-	go rf.electionTicker()
-	go rf.heartbeatTicker()
+	go rf.electTicker()
+	go rf.appendTicker()
+	go rf.commitTicker()
 
 	return rf
 }
