@@ -45,7 +45,7 @@ func (rf *Raft) ResetInitialTime() {
 	rf.initialTime = time.Now()
 }
 
-func (rf *Raft) DiscoverNewTerm(term int) {
+func (rf *Raft) BecomeFollower(term int) {
 	oriTerm := rf.currentTerm
 	rf.currentTerm = term
 	rf.votedFor = -1
@@ -53,11 +53,11 @@ func (rf *Raft) DiscoverNewTerm(term int) {
 	oriRole := rf.role
 	rf.role = Follower
 	rf.voteNum = 0
-	rf.DPrintf("[S%v T%v->T%v Raft.DiscoverNewTerm] role: %v -> Follower (discover new term)\n",
+	rf.DPrintf("[S%v T%v->T%v Raft.BecomeFollower] role: %v -> Follower (discover new term)\n",
 		rf.me, oriTerm, rf.currentTerm, oriRole)
 }
 
-func (rf *Raft) StartElection() {
+func (rf *Raft) BecomeCandidate() {
 	oriTerm := rf.currentTerm
 	rf.currentTerm++
 	rf.votedFor = rf.me
@@ -65,13 +65,18 @@ func (rf *Raft) StartElection() {
 	oriRole := rf.role
 	rf.role = Candidate
 	rf.voteNum = 1
-	rf.DPrintf("[S%v T%v->T%v Raft.StartElection] role: %v -> Candidate (start election)\n",
+	rf.DPrintf("[S%v T%v->T%v Raft.BecomeCandidate] role: %v -> Candidate (start election)\n",
 		rf.me, oriTerm, rf.currentTerm, oriRole)
 }
 
 func (rf *Raft) BecomeLeader() {
 	oriRole := rf.role
 	rf.role = Leader
+	initialNextIndex := rf.GetLastLogIndex() + 1
+	for server := range rf.peers {
+		rf.nextIndex[server] = initialNextIndex
+		rf.matchIndex[server] = 0
+	}
 	rf.DPrintf("[S%v T%v Raft.BecomeLeader] role: %v -> Leader\n",
 		rf.me, rf.currentTerm, oriRole)
 }

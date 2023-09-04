@@ -50,6 +50,27 @@ func (role Role) String() string {
 	return ret
 }
 
+type AppendStatus int
+
+const (
+	Success AppendStatus = iota
+	TermLagFailure
+	LogMatchFailure
+)
+
+func (appendStatus AppendStatus) AppendStatus() string {
+	var ret string
+	switch appendStatus {
+	case Success:
+		ret = "Success"
+	case TermLagFailure:
+		ret = "TermLagFailure"
+	case LogMatchFailure:
+		ret = "LogMatchFailure"
+	}
+	return ret
+}
+
 type LogEntry struct {
 	Command interface{}
 	Term    int
@@ -215,8 +236,8 @@ type AppendEntriesArgs struct {
 }
 
 type AppendEntriesReply struct {
-	Term    int
-	Success bool
+	Term   int
+	Status AppendStatus
 }
 
 //
@@ -240,7 +261,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	if args.Term > rf.currentTerm {
-		rf.DiscoverNewTerm(args.Term)
+		rf.BecomeFollower(args.Term)
 		reply.Term = rf.currentTerm
 	}
 
@@ -275,22 +296,19 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.DPrintf("[S%v T%v Raft.AppendEntries] Receive AppendEntries RPC from S%v\n",
 		rf.me, rf.currentTerm, args.LeaderId)
 
-	reply.Success = true
+	reply.Status = Success
 	reply.Term = rf.currentTerm
 
 	if args.Term < rf.currentTerm {
-		reply.Success = false
+		reply.Status = TermLagFailure
 		return
 	}
-	rf.ResetInitialTime()
 
-	if args.Term > rf.currentTerm {
-		rf.DiscoverNewTerm(args.Term)
-		reply.Term = rf.currentTerm
-	}
+	rf.BecomeFollower(args.Term)
+	reply.Term = rf.currentTerm
 
 	if !rf.MatchTerm(args.PrevLogIndex, args.PrevLogTerm) {
-		reply.Success = false
+		reply.Status = LogMatchFailure
 		rf.log = rf.log[:Min(len(rf.log), args.PrevLogIndex)]
 		return
 	}
@@ -362,8 +380,8 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 
 	rf.mu.Lock()
 	if ok {
-		rf.DPrintf("[S%v T%v Raft.sendAppendEntries] Receive AppendEntries ACK from S%v | success: %v\n",
-			rf.me, rf.currentTerm, server, reply.Success)
+		rf.DPrintf("[S%v T%v Raft.sendAppendEntries] Receive AppendEntries ACK from S%v | status: %v\n",
+			rf.me, rf.currentTerm, server, reply.Status)
 	} else {
 		rf.DPrintf("[S%v T%v Raft.sendAppendEntries] Fail to receive AppendEntries ACK from S%v\n",
 			rf.me, rf.currentTerm, server)
@@ -460,7 +478,7 @@ func (rf *Raft) electTicker() {
 		}
 		//rf.DPrintf("[S%v->ALL T%v] span before election: %v\n",
 		//	rf.me, rf.currentTerm, time.Now().Sub(tempTime))
-		rf.StartElection()
+		rf.BecomeCandidate()
 
 		requestVoteArgs := RequestVoteArgs{
 			Term:        rf.currentTerm,
@@ -493,7 +511,7 @@ func (rf *Raft) electTicker() {
 					}
 
 					if requestVoteReply.Term > rf.currentTerm {
-						rf.DiscoverNewTerm(requestVoteReply.Term)
+						rf.BecomeFollower(requestVoteReply.Term)
 						return
 					}
 
@@ -520,17 +538,25 @@ func (rf *Raft) appendTicker() {
 			continue
 		}
 
-		appendEntriesArgs := AppendEntriesArgs{
-			Term:     rf.currentTerm,
-			LeaderId: rf.me,
-		}
-
 		for server := range rf.peers {
 			if server == rf.me {
 				continue
 			}
 			go func(server int) {
 				rf.mu.Lock()
+				lastLogIndex := rf.GetLastLogIndex()
+				nextIndex := rf.nextIndex[server]
+				appendEntriesArgs := AppendEntriesArgs{
+					Term:         rf.currentTerm,
+					LeaderId:     rf.me,
+					PrevLogIndex: nextIndex - 1,
+					PrevLogTerm:  rf.log[nextIndex-1].Term,
+					LeaderCommit: rf.commitIndex,
+					Entries:      []LogEntry{},
+				}
+				if lastLogIndex >= rf.nextIndex[server] {
+					appendEntriesArgs.Entries = rf.log[nextIndex : lastLogIndex+1]
+				}
 				appendEntriesReply := AppendEntriesReply{}
 				rf.mu.Unlock()
 
@@ -544,9 +570,15 @@ func (rf *Raft) appendTicker() {
 					}
 
 					if appendEntriesReply.Term > rf.currentTerm {
-						rf.DiscoverNewTerm(appendEntriesReply.Term)
+						rf.BecomeFollower(appendEntriesReply.Term)
 						return
 					}
+
+					if appendEntriesReply.Status == LogMatchFailure {
+						rf.nextIndex[server]--
+					}
+
+					//	TODO: update commitIndex
 				}
 			}(server)
 		}
@@ -615,7 +647,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// Your initialization code here (2A, 2B, 2C).
 	rf.currentTerm = 0
 	rf.votedFor = -1
-	rf.log = make([]LogEntry, 0)
+	rf.log = make([]LogEntry, 1)
 
 	rf.commitIndex = 0
 	rf.lastApplied = 0
