@@ -91,7 +91,6 @@ func TestReElection2A(t *testing.T) {
 		cfg.end()
 		cfg.cleanup()
 	}
-
 }
 
 func TestManyElections2A(t *testing.T) {
@@ -128,7 +127,6 @@ func TestManyElections2A(t *testing.T) {
 		cfg.end()
 		cfg.cleanup()
 	}
-
 }
 
 func TestBasicAgree2B(t *testing.T) {

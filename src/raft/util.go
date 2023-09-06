@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"fmt"
 	"log"
 	"math/rand"
 	"time"
@@ -41,31 +42,44 @@ func RandomTimeout() time.Duration {
 	return time.Duration(MinTimeout+rand.Intn(MaxTimeout-MinTimeout)) * time.Millisecond
 }
 
+func Command2Str(command interface{}) string {
+	ret := fmt.Sprintf("%v", command)
+	if len(ret) > 10 {
+		ret = ret[0:10] + "......"
+	}
+	return ret
+}
+
 func (rf *Raft) ResetInitialTime() {
 	rf.initialTime = time.Now()
 }
 
 func (rf *Raft) BecomeFollower(term int) {
 	oriTerm := rf.currentTerm
-	rf.currentTerm = term
-	rf.votedFor = -1
-	rf.ResetInitialTime()
 	oriRole := rf.role
+	if term < oriTerm {
+		errorMsg := fmt.Sprintf("[S%v T%v->T%v Raft.BecomeFollower] Term can't decrease\n",
+			rf.me, oriTerm, term)
+		panic(errorMsg)
+	}
+	if term > oriTerm {
+		rf.votedFor = -1
+	}
+	rf.currentTerm = term
 	rf.role = Follower
 	rf.voteNum = 0
-	rf.DPrintf("[S%v T%v->T%v Raft.BecomeFollower] role: %v -> Follower (discover new term)\n",
+	rf.DPrintf("[S%v T%v->T%v Raft.BecomeFollower] role: %v -> Follower\n",
 		rf.me, oriTerm, rf.currentTerm, oriRole)
 }
 
 func (rf *Raft) BecomeCandidate() {
 	oriTerm := rf.currentTerm
+	oriRole := rf.role
 	rf.currentTerm++
 	rf.votedFor = rf.me
-	rf.ResetInitialTime()
-	oriRole := rf.role
 	rf.role = Candidate
 	rf.voteNum = 1
-	rf.DPrintf("[S%v T%v->T%v Raft.BecomeCandidate] role: %v -> Candidate (start election)\n",
+	rf.DPrintf("[S%v T%v->T%v Raft.BecomeCandidate] role: %v -> Candidate\n",
 		rf.me, oriTerm, rf.currentTerm, oriRole)
 }
 
@@ -94,6 +108,13 @@ func (rf *Raft) GetLastLogInfo() (int, int) {
 	return lastLogIndex, lastLogTerm
 }
 
+func (rf *Raft) GetTerm(index int) int {
+	if index > rf.GetLastLogIndex() {
+		return -1
+	}
+	return rf.log[index].Term
+}
+
 func (rf *Raft) UpToDate(index int, term int) bool {
 	lastLogIndex, lastLogTerm := rf.GetLastLogInfo()
 	if term != lastLogTerm {
@@ -103,8 +124,6 @@ func (rf *Raft) UpToDate(index int, term int) bool {
 }
 
 func (rf *Raft) MatchTerm(index int, term int) bool {
-	if index > rf.GetLastLogIndex() {
-		return false
-	}
-	return rf.log[index].Term == term
+	term_ := rf.GetTerm(index)
+	return term_ == term
 }
