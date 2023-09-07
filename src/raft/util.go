@@ -63,9 +63,10 @@ func (rf *Raft) BecomeFollower(term int) {
 		panic(errorMsg)
 	}
 	if term > oriTerm {
+		rf.currentTerm = term
 		rf.votedFor = -1
+		rf.persist()
 	}
-	rf.currentTerm = term
 	rf.role = Follower
 	rf.voteNum = 0
 	rf.DPrintf("[S%v T%v->T%v Raft.BecomeFollower] role: %v -> Follower\n",
@@ -77,6 +78,7 @@ func (rf *Raft) BecomeCandidate() {
 	oriRole := rf.role
 	rf.currentTerm++
 	rf.votedFor = rf.me
+	rf.persist()
 	rf.role = Candidate
 	rf.voteNum = 1
 	rf.DPrintf("[S%v T%v->T%v Raft.BecomeCandidate] role: %v -> Candidate\n",

@@ -18,6 +18,8 @@ package raft
 //
 
 import (
+	"6.824/labgob"
+	"bytes"
 	"fmt"
 	"math/rand"
 	//	"bytes"
@@ -161,6 +163,13 @@ func (rf *Raft) persist() {
 	// e.Encode(rf.yyy)
 	// data := w.Bytes()
 	// rf.persister.SaveRaftState(data)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.votedFor)
+	e.Encode(rf.log)
+	data := w.Bytes()
+	rf.persister.SaveRaftState(data)
 }
 
 //
@@ -183,6 +192,20 @@ func (rf *Raft) readPersist(data []byte) {
 	//   rf.xxx = xxx
 	//   rf.yyy = yyy
 	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var currentTerm int
+	var votedFor int
+	var log []LogEntry
+	if d.Decode(&currentTerm) != nil ||
+		d.Decode(&votedFor) != nil ||
+		d.Decode(&log) != nil {
+		panic("[Raft.readPersist] Decode error")
+	} else {
+		rf.currentTerm = currentTerm
+		rf.votedFor = votedFor
+		rf.log = log
+	}
 }
 
 //
@@ -239,8 +262,9 @@ type AppendEntriesArgs struct {
 }
 
 type AppendEntriesReply struct {
-	Term   int
-	Status AppendStatus
+	Term      int
+	Status    AppendStatus
+	NextIndex int
 }
 
 //
@@ -290,6 +314,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	rf.votedFor = args.CandidateId
+	rf.persist()
 	rf.ResetInitialTime()
 	reply.VoteGranted = true
 	rf.DPrintf("[S%v T%v Raft.RequestVote(S%v-%v)] Vote for S%v\n",
@@ -305,6 +330,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	reply.Status = Success
 	reply.Term = rf.currentTerm
+	reply.NextIndex = args.PrevLogIndex
 
 	if args.Term < rf.currentTerm {
 		reply.Status = TermLagFailure
@@ -314,8 +340,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 
-	rf.ResetInitialTime()
 	rf.BecomeFollower(args.Term)
+	rf.ResetInitialTime()
 	reply.Term = rf.currentTerm
 
 	if !rf.MatchTerm(args.PrevLogIndex, args.PrevLogTerm) {
@@ -324,11 +350,29 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			"(don't match term at I%v: %v VS %v)\n",
 			rf.me, rf.currentTerm, args.LeaderId, args.RpcIdx, args.LeaderId,
 			args.PrevLogIndex, rf.GetTerm(args.PrevLogIndex), args.PrevLogTerm)
-		rf.log = rf.log[:Min(len(rf.log), args.PrevLogIndex)]
+
+		//	optimize reply.NextIndex
+		lastLogIndex := rf.GetLastLogIndex()
+		if lastLogIndex < args.PrevLogIndex {
+			reply.NextIndex = lastLogIndex + 1
+		} else {
+			index := args.PrevLogIndex
+			term := rf.GetTerm(index)
+			for ; index > 0; index-- {
+				if rf.GetTerm(index) != term {
+					break
+				}
+			}
+			reply.NextIndex = index + 1
+		}
+
+		rf.log = rf.log[:Min(lastLogIndex+1, args.PrevLogIndex)]
+		rf.persist()
 		return
 	}
 
 	rf.log = append(rf.log[:args.PrevLogIndex+1], args.Entries...)
+	rf.persist()
 
 	lastLogIndex := rf.GetLastLogIndex()
 	if args.LeaderCommit > rf.commitIndex {
@@ -404,8 +448,9 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 
 	rf.mu.Lock()
 	if ok {
-		rf.DPrintf("[S%v T%v Raft.sendAppendEntries(%v)] Receive AppendEntries ACK from S%v | status: %v\n",
-			rf.me, rf.currentTerm, args.RpcIdx, server, reply.Status)
+		rf.DPrintf("[S%v T%v Raft.sendAppendEntries(%v)] Receive AppendEntries ACK from S%v "+
+			"| status: %v | nextIndex: %v\n",
+			rf.me, rf.currentTerm, args.RpcIdx, server, reply.Status, reply.NextIndex)
 	} else {
 		rf.DPrintf("[S%v T%v Raft.sendAppendEntries(%v)] Fail to receive AppendEntries ACK from S%v\n",
 			rf.me, rf.currentTerm, args.RpcIdx, server)
@@ -449,8 +494,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			Term:    term,
 		}
 		rf.log = append(rf.log, logEntry)
+		rf.persist()
 		rf.DPrintf("[S%v T%v Raft.Start] Append the command \"%v\" | index: %v\n",
-			rf.me, rf.currentTerm, command, index)
+			rf.me, rf.currentTerm, Command2Str(command), index)
 	}
 
 	return index, term, isLeader
@@ -658,7 +704,8 @@ func (rf *Raft) appendTicker() {
 					}
 				} else if appendEntriesReply.Status == LogMatchFailure {
 					oriNextIndex := rf.nextIndex[server]
-					rf.nextIndex[server]--
+					//	rf.nextIndex[server]--
+					rf.nextIndex[server] = appendEntriesReply.NextIndex
 					rf.DPrintf("[S%v T%v Raft.appendTicker] nextIndex[%v]: %v -> %v \n",
 						rf.me, rf.currentTerm, server, oriNextIndex, rf.nextIndex[server])
 				}
