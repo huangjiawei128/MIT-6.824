@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"sort"
 	"time"
 )
 
@@ -25,17 +26,24 @@ func (rf *Raft) DPrintf(format string, a ...interface{}) (n int, err error) {
 }
 
 const (
-	MinTimeout      = 250
-	MaxTimeout      = 500
-	HeartbeatPeriod = 100
-	CommitPeriod    = 10
+	MinTimeout   = 250
+	MaxTimeout   = 500
+	AppendPeriod = 100
+	ApplyPeriod  = 10
 )
 
-func Min(x int, y int) int {
-	if x < y {
-		return x
+func Max(x1 int, x2 int) int {
+	if x1 > x2 {
+		return x1
 	}
-	return y
+	return x2
+}
+
+func Min(x1 int, x2 int) int {
+	if x1 < x2 {
+		return x1
+	}
+	return x2
 }
 
 func RandomTimeout() time.Duration {
@@ -115,6 +123,14 @@ func (rf *Raft) GetTerm(index int) int {
 		return -1
 	}
 	return rf.log[index].Term
+}
+
+func (rf *Raft) GetMajorityMatchIndex() int {
+	matchIndexCopy := make([]int, len(rf.peers))
+	copy(matchIndexCopy, rf.matchIndex)
+	matchIndexCopy[rf.me] = 0
+	sort.Ints(matchIndexCopy)
+	return matchIndexCopy[len(rf.peers)>>1+1]
 }
 
 func (rf *Raft) UpToDate(index int, term int) bool {
