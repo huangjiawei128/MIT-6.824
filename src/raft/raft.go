@@ -95,10 +95,12 @@ type Raft struct {
 	// state a Raft server must maintain.
 
 	// Persistent state on all servers
-	currentTerm int
-	votedFor    int
-	rpcIdx      int
-	log         []LogEntry
+	currentTerm       int
+	votedFor          int
+	rpcIndex          int
+	log               []LogEntry
+	lastIncludedIndex int
+	lastIncludedTerm  int
 
 	// Volatile state on all servers
 	commitIndex int
@@ -133,6 +135,19 @@ func (rf *Raft) GetState() (int, bool) {
 // where it can later be retrieved after a crash and restart.
 // see paper's Figure 2 for a description of what should be persistent.
 //
+func (rf *Raft) stateData() []byte {
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.votedFor)
+	e.Encode(rf.rpcIndex)
+	e.Encode(rf.log)
+	e.Encode(rf.lastIncludedIndex)
+	e.Encode(rf.lastIncludedTerm)
+	data := w.Bytes()
+	return data
+}
+
 func (rf *Raft) persist() {
 	// Your code here (2C).
 	// Example:
@@ -142,13 +157,7 @@ func (rf *Raft) persist() {
 	// e.Encode(rf.yyy)
 	// data := w.Bytes()
 	// rf.persister.SaveRaftState(data)
-	w := new(bytes.Buffer)
-	e := labgob.NewEncoder(w)
-	e.Encode(rf.currentTerm)
-	e.Encode(rf.votedFor)
-	e.Encode(rf.rpcIdx)
-	e.Encode(rf.log)
-	data := w.Bytes()
+	data := rf.stateData()
 	rf.persister.SaveRaftState(data)
 }
 
@@ -176,18 +185,24 @@ func (rf *Raft) readPersist(data []byte) {
 	d := labgob.NewDecoder(r)
 	var currentTerm int
 	var votedFor int
-	var rpcIdx int
+	var rpcIndex int
 	var log []LogEntry
+	var lastIncludedIndex int
+	var lastIncludedTerm int
 	if d.Decode(&currentTerm) != nil ||
 		d.Decode(&votedFor) != nil ||
-		d.Decode(&rpcIdx) != nil ||
-		d.Decode(&log) != nil {
+		d.Decode(&rpcIndex) != nil ||
+		d.Decode(&log) != nil ||
+		d.Decode(&lastIncludedIndex) != nil ||
+		d.Decode(&lastIncludedTerm) != nil {
 		panic("[Raft.readPersist] Decode error")
 	} else {
 		rf.currentTerm = currentTerm
 		rf.votedFor = votedFor
-		rf.rpcIdx = rpcIdx
+		rf.rpcIndex = rpcIndex
 		rf.log = log
+		rf.lastIncludedIndex = lastIncludedIndex
+		rf.lastIncludedTerm = lastIncludedTerm
 	}
 }
 
@@ -208,7 +223,33 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (2D).
+	if rf.killed() {
+		return
+	}
 
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if index <= rf.lastIncludedIndex {
+		rf.DPrintf("[S%v T%v Raft.Snapshot] Fail to make the snapshot (have ahead lastIncludedIndex: %v VS %v)\n",
+			rf.me, rf.currentTerm, rf.lastIncludedIndex, index)
+		return
+	}
+
+	rf.DPrintf("[S%v T%v Raft.Snapshot] origin len(log): %v | lastLogIndex: %v | lastIncludedIndex: %v\n",
+		rf.me, rf.currentTerm, len(rf.log), rf.GetLastLogIndex(), rf.lastIncludedIndex)
+	newLog := make([]LogEntry, 1)
+	if rf.GetLastLogIndex() > index {
+		newLog = append(newLog, rf.GetRightSubLog(index+1)...)
+	}
+	rf.lastIncludedIndex, rf.lastIncludedTerm = index, rf.GetTerm(index)
+	rf.log = newLog
+	rf.persister.SaveStateAndSnapshot(rf.stateData(), snapshot)
+
+	rf.lastApplied = Max(rf.lastApplied, rf.lastIncludedIndex)
+	rf.commitIndex = Max(rf.commitIndex, rf.lastIncludedIndex)
+	rf.DPrintf("[S%v T%v Raft.Snapshot] Make the snapshot | index: %v | term: %v | len(log): %v\n",
+		rf.me, rf.currentTerm, rf.lastIncludedIndex, rf.lastIncludedTerm, len(rf.log))
 }
 
 //
@@ -231,13 +272,17 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	isLeader := false
 
 	// Your code here (2B).
+	if rf.killed() {
+		return index, term, isLeader
+	}
+
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
 	if rf.role != Leader {
 		rf.DPrintf("[S%v T%v Raft.Start] Fail to append the command \"%v\" (isn't the leader)\n",
 			rf.me, rf.currentTerm, Command2Str(command))
-	} else if !rf.killed() {
+	} else {
 		index = rf.GetLastLogIndex() + 1
 		term = rf.currentTerm
 		isLeader = true
@@ -311,14 +356,18 @@ func (rf *Raft) electTicker() {
 				continue
 			}
 			go func(server int) {
+				rf.mu.Lock()
 				args, reply, preOk := rf.sendRequestVotePre(server)
+				rf.mu.Unlock()
 				if !preOk {
 					return
 				}
 
 				ok := rf.sendRequestVote(server, &args, &reply)
 
+				rf.mu.Lock()
 				rf.sendRequestVotePro(server, &args, &reply, ok)
+				rf.mu.Unlock()
 			}(server)
 		}
 		rf.mu.Unlock()
@@ -340,14 +389,32 @@ func (rf *Raft) appendTicker() {
 				continue
 			}
 			go func(server int) {
-				args, reply, preOk := rf.sendAppendEntriesPre(server)
-				if !preOk {
-					return
+				rf.mu.Lock()
+				if rf.nextIndex[server] <= rf.lastIncludedIndex {
+					args, reply, preOk := rf.sendInstallSnapshotPre(server)
+					rf.mu.Unlock()
+					if !preOk {
+						return
+					}
+
+					ok := rf.sendInstallSnapshot(server, &args, &reply)
+
+					rf.mu.Lock()
+					rf.sendInstallSnapshotPro(server, &args, &reply, ok)
+					rf.mu.Unlock()
+				} else {
+					args, reply, preOk := rf.sendAppendEntriesPre(server)
+					rf.mu.Unlock()
+					if !preOk {
+						return
+					}
+
+					ok := rf.sendAppendEntries(server, &args, &reply)
+
+					rf.mu.Lock()
+					rf.sendAppendEntriesPro(server, &args, &reply, ok)
+					rf.mu.Unlock()
 				}
-
-				ok := rf.sendAppendEntries(server, &args, &reply)
-
-				rf.sendAppendEntriesPro(server, &args, &reply, ok)
 			}(server)
 		}
 		rf.mu.Unlock()
@@ -360,7 +427,7 @@ func (rf *Raft) applyTicker() {
 
 		rf.mu.Lock()
 		if rf.lastApplied > rf.commitIndex {
-			errorMsg := fmt.Sprintf("[S%v T%v Raft.applyTikcer] lastApplied > commitIndex\n",
+			errorMsg := fmt.Sprintf("[S%v T%v Raft.applyTicker] lastApplied > commitIndex\n",
 				rf.me, rf.currentTerm)
 			rf.mu.Unlock()
 			panic(errorMsg)
@@ -368,21 +435,40 @@ func (rf *Raft) applyTicker() {
 
 		lastLogIndex := rf.GetLastLogIndex()
 		if rf.commitIndex > lastLogIndex {
-			errorMsg := fmt.Sprintf("[S%v T%v Raft.applyTikcer] commitIndex > lastLogIndex: %v VS %v\n",
-				rf.me, rf.currentTerm, rf.commitIndex, lastLogIndex)
+			errorMsg := fmt.Sprintf("[S%v T%v Raft.applyTicker] commitIndex > lastLogIndex: %v VS %v, "+
+				"lastIncludedIndex: %v, len(log): %v\n",
+				rf.me, rf.currentTerm, rf.commitIndex, lastLogIndex, rf.lastIncludedIndex, len(rf.log))
 			rf.mu.Unlock()
 			panic(errorMsg)
 		}
 
 		applyMsgs := make([]ApplyMsg, 0)
-		for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
-			command := rf.log[i].Command
+
+		i := rf.lastApplied + 1
+		if i <= rf.lastIncludedIndex {
+			applyMsg := ApplyMsg{
+				CommandValid:  false,
+				SnapshotValid: true,
+				Snapshot:      rf.persister.ReadSnapshot(),
+				SnapshotIndex: rf.lastIncludedIndex,
+				SnapshotTerm:  rf.lastIncludedTerm,
+			}
+			applyMsgs = append(applyMsgs, applyMsg)
+			i = rf.lastIncludedIndex + 1
+			rf.ApplyDPrintf("[S%v T%v Raft.applyTicker] Prepare to apply the snapshot | index: %v | term: %v\n",
+				rf.me, rf.currentTerm, applyMsg.SnapshotIndex, applyMsg.Snapshot)
+		}
+
+		for ; i <= rf.commitIndex; i++ {
+			command := rf.GetCommand(i)
 			applyMsg := ApplyMsg{
 				CommandValid: true,
 				Command:      command,
 				CommandIndex: i,
 			}
 			applyMsgs = append(applyMsgs, applyMsg)
+			rf.ApplyDPrintf("[S%v T%v Raft.applyTicker] Prepare to apply the command \"%v\" | index: %v\n",
+				rf.me, rf.currentTerm, Command2Str(applyMsg.Command), applyMsg.CommandIndex)
 		}
 		rf.lastApplied = rf.commitIndex
 		rf.mu.Unlock()
@@ -416,8 +502,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// Your initialization code here (2A, 2B, 2C).
 	rf.currentTerm = 0
 	rf.votedFor = -1
-	rf.rpcIdx = 0
+	rf.rpcIndex = 0
 	rf.log = make([]LogEntry, 1)
+	rf.lastIncludedIndex = 0
+	rf.lastIncludedTerm = 0
 
 	rf.commitIndex = 0
 	rf.lastApplied = 0
@@ -427,6 +515,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.ResetInitialTime()
 	rf.role = Follower
+	rf.voteNum = 0
 	rf.applyCh = applyCh
 
 	// initialize from state persisted before a crash

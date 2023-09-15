@@ -11,8 +11,17 @@ import (
 // Debugging
 const Debug = true
 
+const ApplyDebug = true
+
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+func ApplyDPrintf(format string, a ...interface{}) (n int, err error) {
+	if ApplyDebug {
 		log.Printf(format, a...)
 	}
 	return
@@ -25,10 +34,17 @@ func (rf *Raft) DPrintf(format string, a ...interface{}) (n int, err error) {
 	return
 }
 
+func (rf *Raft) ApplyDPrintf(format string, a ...interface{}) (n int, err error) {
+	if !rf.killed() {
+		ApplyDPrintf(format, a...)
+	}
+	return
+}
+
 const (
 	MinTimeout   = 250
-	MaxTimeout   = 500
-	AppendPeriod = 100
+	MaxTimeout   = 400
+	AppendPeriod = 75
 	ApplyPeriod  = 10
 )
 
@@ -106,23 +122,47 @@ func (rf *Raft) BecomeLeader() {
 }
 
 func (rf *Raft) GetLastLogIndex() int {
-	return len(rf.log) - 1
+	return len(rf.log) - 1 + rf.lastIncludedIndex
 }
 
 func (rf *Raft) GetLastLogInfo() (int, int) {
 	lastLogIndex := rf.GetLastLogIndex()
 	lastLogTerm := 0
-	if lastLogIndex >= 0 {
-		lastLogTerm = rf.log[lastLogIndex].Term
+	if lastLogIndex <= rf.lastIncludedIndex {
+		lastLogTerm = rf.lastIncludedTerm
+	} else {
+		lastLogTerm = rf.log[lastLogIndex-rf.lastIncludedIndex].Term
 	}
 	return lastLogIndex, lastLogTerm
+}
+
+func (rf *Raft) GetCommand(index int) interface{} {
+	if index > rf.GetLastLogIndex() || index <= rf.lastIncludedIndex {
+		return nil
+	}
+	return rf.log[index-rf.lastIncludedIndex].Command
 }
 
 func (rf *Raft) GetTerm(index int) int {
 	if index > rf.GetLastLogIndex() {
 		return -1
 	}
-	return rf.log[index].Term
+	if index <= rf.lastIncludedIndex {
+		return rf.lastIncludedTerm
+	}
+	return rf.log[index-rf.lastIncludedIndex].Term
+}
+
+func (rf *Raft) GetLeftSubLog(rightIndex int) []LogEntry {
+	return rf.log[:rightIndex-rf.lastIncludedIndex]
+}
+
+func (rf *Raft) GetRightSubLog(leftIndex int) []LogEntry {
+	return rf.log[leftIndex-rf.lastIncludedIndex:]
+}
+
+func (rf *Raft) GetSubLog(leftIndex int, rightIndex int) []LogEntry {
+	return rf.log[leftIndex-rf.lastIncludedIndex : rightIndex-rf.lastIncludedIndex]
 }
 
 func (rf *Raft) GetMajorityMatchIndex() int {
