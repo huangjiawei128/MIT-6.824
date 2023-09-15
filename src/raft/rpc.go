@@ -421,7 +421,7 @@ func (rf *Raft) sendInstallSnapshotPre(server int) (InstallSnapshotArgs, Install
 	}
 	rf.rpcIndex++
 	reply := InstallSnapshotReply{}
-	rf.DPrintf("[S%v T%v Raft.sendInstallSnapshotPre(T%v-%v)] Send AppendEntries RPC to S%v\n",
+	rf.DPrintf("[S%v T%v Raft.sendInstallSnapshotPre(T%v-%v)] Send InstallSnapshot RPC to S%v\n",
 		rf.me, rf.currentTerm, args.Term, args.RpcIndex, server)
 	return args, reply, true
 }
@@ -433,10 +433,10 @@ func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply
 
 func (rf *Raft) sendInstallSnapshotPro(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply, ok bool) {
 	if ok {
-		rf.DPrintf("[S%v T%v Raft.sendInstallSnapshotPro(T%v-%v)] Receive AppendEntries ACK from S%v\n",
+		rf.DPrintf("[S%v T%v Raft.sendInstallSnapshotPro(T%v-%v)] Receive InstallSnapshot ACK from S%v\n",
 			rf.me, rf.currentTerm, args.Term, args.RpcIndex, server)
 	} else {
-		rf.DPrintf("[S%v T%v Raft.sendInstallSnapshotPro(T%v-%v)] Fail to receive AppendEntries ACK from S%v\n",
+		rf.DPrintf("[S%v T%v Raft.sendInstallSnapshotPro(T%v-%v)] Fail to receive InstallSnapshot ACK from S%v\n",
 			rf.me, rf.currentTerm, args.Term, args.RpcIndex, server)
 		return
 	}
@@ -462,7 +462,7 @@ func (rf *Raft) sendInstallSnapshotPro(server int, args *InstallSnapshotArgs, re
 
 func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
 	rf.mu.Lock()
-	rf.DPrintf("[S%v T%v Raft.InstallSnapshot(S%v-T%v-%v)] Receive AppendEntries RPC from S%v\n",
+	rf.DPrintf("[S%v T%v Raft.InstallSnapshot(S%v-T%v-%v)] Receive InstallSnapshot RPC from S%v\n",
 		rf.me, rf.currentTerm, args.LeaderId, args.Term, args.RpcIndex, args.LeaderId)
 
 	reply.Term = rf.currentTerm
@@ -502,6 +502,8 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		rf.mu.Unlock()
 		return
 	}
+	oriLastApplied := rf.lastApplied
+	oriCommitIndex := rf.commitIndex
 	rf.lastApplied = rf.lastIncludedIndex
 	rf.commitIndex = Max(rf.commitIndex, rf.lastIncludedIndex)
 
@@ -511,8 +513,10 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		SnapshotTerm:  rf.lastIncludedTerm,
 		SnapshotIndex: rf.lastIncludedIndex,
 	}
-	rf.ApplyDPrintf("[S%v T%v Raft.InstallSnapshot] Prepare to apply the snapshot | index: %v | term: %v\n",
-		rf.me, rf.currentTerm, applyMsg.SnapshotIndex, applyMsg.SnapshotTerm)
+	rf.ApplyDPrintf("[S%v T%v Raft.InstallSnapshot] Prepare to apply the snapshot | index: %v | term: %v | "+
+		"lastApplied: %v -> %v | commitIndex: %v -> %v\n",
+		rf.me, rf.currentTerm, applyMsg.SnapshotIndex, applyMsg.SnapshotTerm, oriLastApplied, rf.lastApplied,
+		oriCommitIndex, rf.commitIndex)
 	rf.mu.Unlock()
 
 	rf.applyCh <- applyMsg

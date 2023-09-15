@@ -236,8 +236,10 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 		return
 	}
 
-	rf.DPrintf("[S%v T%v Raft.Snapshot] origin len(log): %v | lastLogIndex: %v | lastIncludedIndex: %v\n",
-		rf.me, rf.currentTerm, len(rf.log), rf.GetLastLogIndex(), rf.lastIncludedIndex)
+	rf.DPrintf("[S%v T%v Raft.Snapshot] Before make the snapshot: "+
+		"lastLogIndex: %v | lastIncludedIndex: %v | lastIncludedTerm: %v | len(log): %v\n",
+		rf.me, rf.currentTerm, rf.GetLastLogIndex(), rf.lastIncludedIndex, rf.lastIncludedTerm, len(rf.log))
+
 	newLog := make([]LogEntry, 1)
 	if rf.GetLastLogIndex() > index {
 		newLog = append(newLog, rf.GetRightSubLog(index+1)...)
@@ -427,25 +429,23 @@ func (rf *Raft) applyTicker() {
 
 		rf.mu.Lock()
 		if rf.lastApplied > rf.commitIndex {
-			errorMsg := fmt.Sprintf("[S%v T%v Raft.applyTicker] lastApplied > commitIndex\n",
-				rf.me, rf.currentTerm)
+			errorMsg := fmt.Sprintf("[S%v T%v Raft.applyTicker] lastApplied > commitIndex: %v VS %v\n",
+				rf.me, rf.currentTerm, rf.lastApplied, rf.commitIndex)
 			rf.mu.Unlock()
 			panic(errorMsg)
 		}
 
 		lastLogIndex := rf.GetLastLogIndex()
 		if rf.commitIndex > lastLogIndex {
-			errorMsg := fmt.Sprintf("[S%v T%v Raft.applyTicker] commitIndex > lastLogIndex: %v VS %v, "+
-				"lastIncludedIndex: %v, len(log): %v\n",
-				rf.me, rf.currentTerm, rf.commitIndex, lastLogIndex, rf.lastIncludedIndex, len(rf.log))
+			errorMsg := fmt.Sprintf("[S%v T%v Raft.applyTicker] commitIndex > lastLogIndex: %v VS %v\n",
+				rf.me, rf.currentTerm, rf.commitIndex, lastLogIndex)
 			rf.mu.Unlock()
 			panic(errorMsg)
 		}
 
 		applyMsgs := make([]ApplyMsg, 0)
 
-		i := rf.lastApplied + 1
-		if i <= rf.lastIncludedIndex {
+		if rf.lastApplied < rf.lastIncludedIndex {
 			applyMsg := ApplyMsg{
 				CommandValid:  false,
 				SnapshotValid: true,
@@ -454,23 +454,31 @@ func (rf *Raft) applyTicker() {
 				SnapshotTerm:  rf.lastIncludedTerm,
 			}
 			applyMsgs = append(applyMsgs, applyMsg)
-			i = rf.lastIncludedIndex + 1
-			rf.ApplyDPrintf("[S%v T%v Raft.applyTicker] Prepare to apply the snapshot | index: %v | term: %v\n",
-				rf.me, rf.currentTerm, applyMsg.SnapshotIndex, applyMsg.Snapshot)
+			oriLastApplied := rf.lastApplied
+			oriCommitIndex := rf.commitIndex
+			rf.lastApplied = rf.lastIncludedIndex
+			rf.commitIndex = Max(rf.commitIndex, rf.lastApplied)
+			rf.ApplyDPrintf("[S%v T%v Raft.applyTicker] Prepare to apply the snapshot | index: %v | term: %v | "+
+				"lastApplied: %v -> %v | commitIndex: %v -> %v\n",
+				rf.me, rf.currentTerm, applyMsg.SnapshotIndex, applyMsg.SnapshotTerm, oriLastApplied, rf.lastApplied,
+				oriCommitIndex, rf.commitIndex)
 		}
 
-		for ; i <= rf.commitIndex; i++ {
-			command := rf.GetCommand(i)
+		for rf.lastApplied < rf.commitIndex {
+			applyIndex := rf.lastApplied + 1
+			command := rf.GetCommand(applyIndex)
 			applyMsg := ApplyMsg{
 				CommandValid: true,
 				Command:      command,
-				CommandIndex: i,
+				CommandIndex: applyIndex,
 			}
 			applyMsgs = append(applyMsgs, applyMsg)
-			rf.ApplyDPrintf("[S%v T%v Raft.applyTicker] Prepare to apply the command \"%v\" | index: %v\n",
-				rf.me, rf.currentTerm, Command2Str(applyMsg.Command), applyMsg.CommandIndex)
+			oriLastApplied := rf.lastApplied
+			rf.lastApplied = applyIndex
+			rf.ApplyDPrintf("[S%v T%v Raft.applyTicker] Prepare to apply the command \"%v\" | index: %v | "+
+				"lastApplied: %v -> %v\n",
+				rf.me, rf.currentTerm, Command2Str(applyMsg.Command), applyMsg.CommandIndex, oriLastApplied, rf.lastApplied)
 		}
-		rf.lastApplied = rf.commitIndex
 		rf.mu.Unlock()
 
 		for _, applyMsg := range applyMsgs {
