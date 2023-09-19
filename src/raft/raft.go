@@ -22,12 +22,10 @@ import (
 	"bytes"
 	"fmt"
 	"math/rand"
-	//	"bytes"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	//	"6.824/labgob"
 	"6.824/labrpc"
 )
 
@@ -97,7 +95,7 @@ type Raft struct {
 	// Persistent state on all servers
 	currentTerm       int
 	votedFor          int
-	rpcIndex          int
+	nextRpcId         int
 	log               []LogEntry
 	lastIncludedIndex int
 	lastIncludedTerm  int
@@ -115,6 +113,7 @@ type Raft struct {
 	role        Role
 	voteNum     int
 	applyCh     chan ApplyMsg
+	newCommand  chan bool
 }
 
 // return currentTerm and whether this server
@@ -140,7 +139,7 @@ func (rf *Raft) stateData() []byte {
 	e := labgob.NewEncoder(w)
 	e.Encode(rf.currentTerm)
 	e.Encode(rf.votedFor)
-	e.Encode(rf.rpcIndex)
+	e.Encode(rf.nextRpcId)
 	e.Encode(rf.log)
 	e.Encode(rf.lastIncludedIndex)
 	e.Encode(rf.lastIncludedTerm)
@@ -185,21 +184,22 @@ func (rf *Raft) readPersist(data []byte) {
 	d := labgob.NewDecoder(r)
 	var currentTerm int
 	var votedFor int
-	var rpcIndex int
+	var rpcId int
 	var log []LogEntry
 	var lastIncludedIndex int
 	var lastIncludedTerm int
 	if d.Decode(&currentTerm) != nil ||
 		d.Decode(&votedFor) != nil ||
-		d.Decode(&rpcIndex) != nil ||
+		d.Decode(&rpcId) != nil ||
 		d.Decode(&log) != nil ||
 		d.Decode(&lastIncludedIndex) != nil ||
 		d.Decode(&lastIncludedTerm) != nil {
-		panic("[Raft.readPersist] Decode error")
+		errorMsg := fmt.Sprintf("[R%v Raft.readPersist] Decode error\n", rf.me)
+		panic(errorMsg)
 	} else {
 		rf.currentTerm = currentTerm
 		rf.votedFor = votedFor
-		rf.rpcIndex = rpcIndex
+		rf.nextRpcId = rpcId
 		rf.log = log
 		rf.lastIncludedIndex = lastIncludedIndex
 		rf.lastIncludedTerm = lastIncludedTerm
@@ -231,12 +231,12 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	defer rf.mu.Unlock()
 
 	if index <= rf.lastIncludedIndex {
-		rf.DPrintf("[S%v T%v Raft.Snapshot] Fail to make the snapshot (have ahead lastIncludedIndex: %v VS %v)\n",
+		rf.DPrintf("[R%v T%v Raft.Snapshot] Fail to make the snapshot (have ahead lastIncludedIndex: %v VS %v)\n",
 			rf.me, rf.currentTerm, rf.lastIncludedIndex, index)
 		return
 	}
 
-	rf.DPrintf("[S%v T%v Raft.Snapshot] Before make the snapshot: "+
+	rf.DPrintf("[R%v T%v Raft.Snapshot] Before make the snapshot: "+
 		"lastLogIndex: %v | lastIncludedIndex: %v | lastIncludedTerm: %v | len(log): %v\n",
 		rf.me, rf.currentTerm, rf.GetLastLogIndex(), rf.lastIncludedIndex, rf.lastIncludedTerm, len(rf.log))
 
@@ -250,7 +250,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 
 	rf.lastApplied = Max(rf.lastApplied, rf.lastIncludedIndex)
 	rf.commitIndex = Max(rf.commitIndex, rf.lastIncludedIndex)
-	rf.DPrintf("[S%v T%v Raft.Snapshot] Make the snapshot | index: %v | term: %v | len(log): %v\n",
+	rf.DPrintf("[R%v T%v Raft.Snapshot] Make the snapshot | index: %v | term: %v | len(log): %v\n",
 		rf.me, rf.currentTerm, rf.lastIncludedIndex, rf.lastIncludedTerm, len(rf.log))
 }
 
@@ -279,10 +279,15 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 
 	rf.mu.Lock()
+	defer func() {
+		if len(rf.newCommand) != cap(rf.newCommand) {
+			rf.newCommand <- true
+		}
+	}()
 	defer rf.mu.Unlock()
 
 	if rf.role != Leader {
-		rf.DPrintf("[S%v T%v Raft.Start] Fail to append the command \"%v\" (isn't the leader)\n",
+		rf.DPrintf("[R%v T%v Raft.Start] Fail to append the command \"%v\" (isn't the leader)\n",
 			rf.me, rf.currentTerm, Command2Str(command))
 	} else {
 		index = rf.GetLastLogIndex() + 1
@@ -294,7 +299,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		}
 		rf.log = append(rf.log, logEntry)
 		rf.persist()
-		rf.DPrintf("[S%v T%v Raft.Start] Append the command \"%v\" | index: %v\n",
+		rf.DPrintf("[R%v T%v Raft.Start] Append the command \"%v\" | index: %v\n",
 			rf.me, rf.currentTerm, Command2Str(command), index)
 	}
 
@@ -315,6 +320,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
+	rf.DPrintf("[R%v] Be killed\n", rf.me)
 }
 
 func (rf *Raft) killed() bool {
@@ -331,8 +337,8 @@ func (rf *Raft) electTicker() {
 		// be started and to randomize sleeping time using
 		// time.Sleep().
 		sleepTime := RandomTimeout()
-		rf.DPrintf("[S%v] election timeout: %v\n",
-			rf.me, sleepTime)
+		//rf.DPrintf("[R%v] election timeout: %v\n",
+		//	rf.me, sleepTime)
 		tempTime := time.Now()
 		time.Sleep(sleepTime)
 		//_sleepTime := syscall.NsecToTimespec(int64(sleepTime))
@@ -342,7 +348,7 @@ func (rf *Raft) electTicker() {
 		if span > time.Second {
 			panic("Sleep span is abnormal\n")
 		}
-		//rf.DPrintf("[S%v] span after sleeping: %v\n",
+		//rf.DPrintf("[R%v] span after sleeping: %v\n",
 		//	rf.me, span)
 
 		rf.mu.Lock()
@@ -353,6 +359,8 @@ func (rf *Raft) electTicker() {
 		rf.BecomeCandidate()
 		rf.ResetInitialTime()
 
+		rf.DPrintf("[R%v T%v Raft.electTicker] Start to request vote\n",
+			rf.me, rf.currentTerm)
 		for server := range rf.peers {
 			if server == rf.me {
 				continue
@@ -378,7 +386,10 @@ func (rf *Raft) electTicker() {
 
 func (rf *Raft) appendTicker() {
 	for rf.killed() == false {
-		time.Sleep(AppendPeriod * time.Millisecond)
+		select {
+		case <-rf.newCommand:
+		case <-time.After(AppendPeriod * time.Millisecond):
+		}
 
 		rf.mu.Lock()
 		if rf.role != Leader {
@@ -386,6 +397,8 @@ func (rf *Raft) appendTicker() {
 			continue
 		}
 
+		rf.DPrintf("[R%v T%v Raft.appendTicker] Start to append entries\n",
+			rf.me, rf.currentTerm)
 		for server := range rf.peers {
 			if server == rf.me {
 				continue
@@ -429,7 +442,7 @@ func (rf *Raft) applyTicker() {
 
 		rf.mu.Lock()
 		if rf.lastApplied > rf.commitIndex {
-			errorMsg := fmt.Sprintf("[S%v T%v Raft.applyTicker] lastApplied > commitIndex: %v VS %v\n",
+			errorMsg := fmt.Sprintf("[R%v T%v Raft.applyTicker] lastApplied > commitIndex: %v VS %v\n",
 				rf.me, rf.currentTerm, rf.lastApplied, rf.commitIndex)
 			rf.mu.Unlock()
 			panic(errorMsg)
@@ -437,7 +450,7 @@ func (rf *Raft) applyTicker() {
 
 		lastLogIndex := rf.GetLastLogIndex()
 		if rf.commitIndex > lastLogIndex {
-			errorMsg := fmt.Sprintf("[S%v T%v Raft.applyTicker] commitIndex > lastLogIndex: %v VS %v\n",
+			errorMsg := fmt.Sprintf("[R%v T%v Raft.applyTicker] commitIndex > lastLogIndex: %v VS %v\n",
 				rf.me, rf.currentTerm, rf.commitIndex, lastLogIndex)
 			rf.mu.Unlock()
 			panic(errorMsg)
@@ -458,7 +471,7 @@ func (rf *Raft) applyTicker() {
 			oriCommitIndex := rf.commitIndex
 			rf.lastApplied = rf.lastIncludedIndex
 			rf.commitIndex = Max(rf.commitIndex, rf.lastApplied)
-			rf.ApplyDPrintf("[S%v T%v Raft.applyTicker] Prepare to apply the snapshot | index: %v | term: %v | "+
+			rf.ApplyDPrintf("[R%v T%v Raft.applyTicker] Prepare to apply the snapshot | index: %v | term: %v | "+
 				"lastApplied: %v -> %v | commitIndex: %v -> %v\n",
 				rf.me, rf.currentTerm, applyMsg.SnapshotIndex, applyMsg.SnapshotTerm, oriLastApplied, rf.lastApplied,
 				oriCommitIndex, rf.commitIndex)
@@ -475,13 +488,15 @@ func (rf *Raft) applyTicker() {
 			applyMsgs = append(applyMsgs, applyMsg)
 			oriLastApplied := rf.lastApplied
 			rf.lastApplied = applyIndex
-			rf.ApplyDPrintf("[S%v T%v Raft.applyTicker] Prepare to apply the command \"%v\" | index: %v | "+
+			rf.ApplyDPrintf("[R%v T%v Raft.applyTicker] Prepare to apply the command \"%v\" | index: %v | "+
 				"lastApplied: %v -> %v\n",
 				rf.me, rf.currentTerm, Command2Str(applyMsg.Command), applyMsg.CommandIndex, oriLastApplied, rf.lastApplied)
 		}
 		rf.mu.Unlock()
 
 		for _, applyMsg := range applyMsgs {
+			rf.ApplyDPrintf("[R%v Raft.applyTicker] Apply the command \"%v\" | index: %v\n",
+				rf.me, Command2Str(applyMsg.Command), applyMsg.CommandIndex)
 			rf.applyCh <- applyMsg
 		}
 	}
@@ -510,7 +525,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// Your initialization code here (2A, 2B, 2C).
 	rf.currentTerm = 0
 	rf.votedFor = -1
-	rf.rpcIndex = 0
+	rf.nextRpcId = 0
 	rf.log = make([]LogEntry, 1)
 	rf.lastIncludedIndex = 0
 	rf.lastIncludedTerm = 0
@@ -525,9 +540,12 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.role = Follower
 	rf.voteNum = 0
 	rf.applyCh = applyCh
+	rf.newCommand = make(chan bool, 1)
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
+	rf.DPrintf("[R%v] Make new raft | currentTerm: %v | votedFor: %v | lastIncludedIndex: %v | lastIncludedTerm: %v\n",
+		rf.me, rf.currentTerm, rf.votedFor, rf.lastIncludedIndex, rf.lastIncludedTerm)
 
 	// start ticker goroutine to start elections
 	go rf.electTicker()

@@ -4,25 +4,28 @@ import (
 	"6.824/labgob"
 	"6.824/labrpc"
 	"6.824/raft"
-	"log"
+	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 )
-
-const Debug = false
-
-func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if Debug {
-		log.Printf(format, a...)
-	}
-	return
-}
-
 
 type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	Id       int
+	ClientId Int64Id
+	Type     string
+	Key      string
+	Value    string
+}
+
+func (op Op) String() string {
+	ret := ""
+	ret = fmt.Sprintf("Id: %v | ClientId: %v | Type: %v | Key: %v | Value: %v",
+		op.Id, op.ClientId, op.Type, Key2Str(op.Key), Value2Str(op.Value))
+	return ret
 }
 
 type KVServer struct {
@@ -35,15 +38,99 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	clientId2executedOpId map[Int64Id]int
+	index2processedOpCh   map[int]chan Op
+	kvStore               map[string]string
 }
-
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	opType := "Get"
+	startOp := Op{
+		Id:       args.OpId,
+		ClientId: args.ClientId,
+		Type:     opType,
+		Key:      args.Key,
+	}
+	index, _, isLeader := kv.rf.Start(startOp)
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		kv.DPrintf("[S%v KVServer.Get(C%v-%v)] Refuse to %v V of K(%v) for C%v (isn't the leader)\n",
+			kv.me, args.ClientId, args.OpId, opType, Key2Str(args.Key), args.ClientId)
+		return
+	}
+	kv.mu.Lock()
+	ch := kv.GetProcessedOpCh(index)
+	kv.mu.Unlock()
+
+	select {
+	case executedOp := <-ch:
+		if executedOp.ClientId != startOp.ClientId || executedOp.Id != startOp.Id {
+			reply.Err = ErrWrongLeader
+			kv.DPrintf("[S%v KVServer.Get(C%v-%v)] Refuse to %v V of K(%v) for C%v "+
+				"(don't match op identifier at I%v: (%v,%v) VS (%v,%v))\n",
+				kv.me, args.ClientId, args.OpId, opType, Key2Str(args.Key), args.ClientId,
+				index, executedOp.ClientId, executedOp.Id, startOp.ClientId, startOp.Id)
+		} else {
+			reply.Err = OK
+			reply.Value = executedOp.Value
+			kv.DPrintf("[S%v KVServer.Get(C%v-%v)] %v V(%v) of K(%v) for C%v\n",
+				kv.me, args.ClientId, args.OpId, opType, Value2Str(reply.Value), Key2Str(args.Key), args.ClientId)
+		}
+	case <-time.After(RpcTimeout * time.Millisecond):
+		reply.Err = ErrWrongLeader
+		kv.DPrintf("[S%v KVServer.Get(C%v-%v)] Refuse to %v V of K(%v) for C%v (rpc timeout)\n",
+			kv.me, args.ClientId, args.OpId, opType, Key2Str(args.Key), args.ClientId)
+	}
+
+	kv.mu.Lock()
+	kv.DeleteProcessedOpCh(index)
+	kv.mu.Unlock()
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	opType := args.Op
+	startOp := Op{
+		Id:       args.OpId,
+		ClientId: args.ClientId,
+		Type:     opType,
+		Key:      args.Key,
+		Value:    args.Value,
+	}
+	index, _, isLeader := kv.rf.Start(startOp)
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		kv.DPrintf("[S%v KVServer.PutAppend(C%v-%v)] Refuse to %v V(%v) of K(%v) for C%v (isn't the leader)\n",
+			kv.me, args.ClientId, args.OpId, opType, Value2Str(args.Value), Key2Str(args.Key), args.ClientId)
+		return
+	}
+	kv.mu.Lock()
+	ch := kv.GetProcessedOpCh(index)
+	kv.mu.Unlock()
+
+	select {
+	case executedOp := <-ch:
+		if executedOp.ClientId != startOp.ClientId || executedOp.Id != startOp.Id {
+			reply.Err = ErrWrongLeader
+			kv.DPrintf("[S%v KVServer.PutAppend(C%v-%v)] Refuse to %v V(%v) of K(%v) for C%v "+
+				"(don't match op identifier at I%v: (%v,%v) VS (%v,%v))\n",
+				kv.me, args.ClientId, args.OpId, opType, Value2Str(args.Value), Key2Str(args.Key), args.ClientId,
+				index, executedOp.ClientId, executedOp.Id, startOp.ClientId, startOp.Id)
+		} else {
+			reply.Err = OK
+			kv.DPrintf("[S%v KVServer.PutAppend(C%v-%v)] %v V(%v) of K(%v) for C%v\n",
+				kv.me, args.ClientId, args.OpId, opType, Value2Str(args.Value), Key2Str(args.Key), args.ClientId)
+		}
+	case <-time.After(RpcTimeout * time.Millisecond):
+		reply.Err = ErrWrongLeader
+		kv.DPrintf("[S%v KVServer.PutAppend(C%v-%v)] Refuse to %v V(%v) of K(%v) for C%v (rpc timeout)\n",
+			kv.me, args.ClientId, args.OpId, opType, Value2Str(args.Value), Key2Str(args.Key), args.ClientId)
+	}
+
+	kv.mu.Lock()
+	kv.DeleteProcessedOpCh(index)
+	kv.mu.Unlock()
 }
 
 //
@@ -60,11 +147,58 @@ func (kv *KVServer) Kill() {
 	atomic.StoreInt32(&kv.dead, 1)
 	kv.rf.Kill()
 	// Your code here, if desired.
+	kv.DPrintf("[S%v] Be killed\n", kv.me)
 }
 
 func (kv *KVServer) killed() bool {
 	z := atomic.LoadInt32(&kv.dead)
 	return z == 1
+}
+
+func (kv *KVServer) processor() {
+	lastProcessed := 0
+	for kv.killed() == false {
+		m := <-kv.applyCh
+		if m.SnapshotValid {
+			// TODO
+		} else if m.CommandValid && m.CommandIndex > lastProcessed {
+			op := m.Command.(Op)
+			kv.DPrintf("[S%v KVServer.applier] Receive the op to be processed \"%v\"\n",
+				kv.me, op)
+			kv.mu.Lock()
+			if op.Type == "Get" {
+				op.Value = kv.kvStore[op.Key]
+				kv.clientId2executedOpId[op.ClientId] = op.Id
+				kv.DPrintf("[S%v KVServer.applier] Execute the op \"%v\"\n",
+					kv.me, op)
+			} else {
+				opBeforeExecuted := kv.OpExecuted(op.ClientId, op.Id)
+				if !opBeforeExecuted {
+					switch op.Type {
+					case "Put":
+						kv.kvStore[op.Key] = op.Value
+					case "Append":
+						kv.kvStore[op.Key] += op.Value
+					}
+					kv.clientId2executedOpId[op.ClientId] = op.Id
+					kv.DPrintf("[S%v KVServer.applier] Execute the op \"%v\"\n",
+						kv.me, op)
+				} else {
+					kv.DPrintf("[S%v KVServer.applier] Refuse to execute the duplicated op \"%v\"\n",
+						kv.me, op)
+				}
+			}
+			ch := kv.GetProcessedOpCh(m.CommandIndex)
+			kv.mu.Unlock()
+
+			kv.DPrintf("[S%v KVServer.applier] Before return the processed op \"%v\"\n",
+				kv.me, op)
+			ch <- op
+			kv.DPrintf("[S%v KVServer.applier] After return the processed op \"%v\"\n",
+				kv.me, op)
+			lastProcessed = m.CommandIndex
+		}
+	}
 }
 
 //
@@ -96,6 +230,13 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
+	kv.clientId2executedOpId = make(map[Int64Id]int)
+	kv.index2processedOpCh = make(map[int]chan Op)
+	kv.kvStore = make(map[string]string)
+	kv.DPrintf("[S%v] Start new KV server | maxraftstate: %v\n",
+		kv.me, kv.maxraftstate)
+
+	go kv.processor()
 
 	return kv
 }

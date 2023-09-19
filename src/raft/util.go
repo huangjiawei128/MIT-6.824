@@ -68,8 +68,9 @@ func RandomTimeout() time.Duration {
 
 func Command2Str(command interface{}) string {
 	ret := fmt.Sprintf("%v", command)
-	if len(ret) > 10 {
-		ret = ret[0:10] + "......"
+	maxLen := 200
+	if len(ret) > maxLen {
+		ret = ret[0:maxLen] + "..."
 	}
 	return ret
 }
@@ -82,7 +83,7 @@ func (rf *Raft) BecomeFollower(term int) {
 	oriTerm := rf.currentTerm
 	oriRole := rf.role
 	if term < oriTerm {
-		errorMsg := fmt.Sprintf("[S%v T%v->T%v Raft.BecomeFollower] Term can't decrease\n",
+		errorMsg := fmt.Sprintf("[R%v T%v->T%v Raft.BecomeFollower] Term can't decrease\n",
 			rf.me, oriTerm, term)
 		panic(errorMsg)
 	}
@@ -93,7 +94,7 @@ func (rf *Raft) BecomeFollower(term int) {
 	}
 	rf.role = Follower
 	rf.voteNum = 0
-	rf.DPrintf("[S%v T%v->T%v Raft.BecomeFollower] role: %v -> Follower\n",
+	rf.DPrintf("[R%v T%v->T%v Raft.BecomeFollower] role: %v -> Follower\n",
 		rf.me, oriTerm, rf.currentTerm, oriRole)
 }
 
@@ -105,7 +106,7 @@ func (rf *Raft) BecomeCandidate() {
 	rf.persist()
 	rf.role = Candidate
 	rf.voteNum = 1
-	rf.DPrintf("[S%v T%v->T%v Raft.BecomeCandidate] role: %v -> Candidate\n",
+	rf.DPrintf("[R%v T%v->T%v Raft.BecomeCandidate] role: %v -> Candidate\n",
 		rf.me, oriTerm, rf.currentTerm, oriRole)
 }
 
@@ -117,7 +118,7 @@ func (rf *Raft) BecomeLeader() {
 		rf.nextIndex[server] = initialNextIndex
 		rf.matchIndex[server] = 0
 	}
-	rf.DPrintf("[S%v T%v Raft.BecomeLeader] role: %v -> Leader\n",
+	rf.DPrintf("[R%v T%v Raft.BecomeLeader] role: %v -> Leader\n",
 		rf.me, rf.currentTerm, oriRole)
 }
 
