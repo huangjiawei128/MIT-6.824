@@ -104,7 +104,10 @@ func (rf *Raft) sendRequestVotePro(server int, args *RequestVoteArgs, reply *Req
 	}
 
 	if reply.VoteGranted {
+		oriVoteNum := rf.voteNum
 		rf.voteNum++
+		rf.DPrintf("[R%v T%v Raft.sendRequestVotePro(T%v-%v)] voteNum: %v -> %v\n",
+			rf.me, rf.currentTerm, args.Term, args.RpcId, oriVoteNum, rf.voteNum)
 		if rf.voteNum > len(rf.peers)>>1 {
 			rf.BecomeLeader()
 		}
@@ -160,9 +163,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.votedFor = args.CandidateId
 	rf.persist()
 	rf.ResetInitialTime()
-	reply.VoteGranted = true
-	rf.DPrintf("[R%v T%v Raft.RequestVote(R%v-T%v-%v)] Vote for R%v\n",
-		rf.me, rf.currentTerm, args.CandidateId, args.Term, args.RpcId, args.CandidateId)
+	rf.DPrintf("[R%v T%v Raft.RequestVote(R%v-T%v-%v)] Vote for R%v | commitIndex: %v\n",
+		rf.me, rf.currentTerm, args.CandidateId, args.Term, args.RpcId, args.CandidateId, rf.commitIndex)
 }
 
 //	==============================
@@ -232,6 +234,7 @@ func (rf *Raft) sendAppendEntriesPre(server int) (AppendEntriesArgs, AppendEntri
 		args.Entries = rf.GetSubLog(nextIndex, lastLogIndex+1)
 	}
 	reply := AppendEntriesReply{}
+
 	rf.DPrintf("[R%v T%v Raft.sendAppendEntriesPre(T%v-%v)] Send AppendEntries RPC to R%v\n",
 		rf.me, rf.currentTerm, args.Term, args.RpcId, server)
 	return args, reply, true
@@ -352,10 +355,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		} else {
 			index := args.PrevLogIndex
 			term := rf.GetTerm(index)
-			for ; index > 0; index-- {
-				if rf.GetTerm(index) != term {
-					break
-				}
+			for ; index > rf.lastIncludedIndex && rf.GetTerm(index) == term; index-- {
 			}
 			reply.NextIndex = index + 1
 		}
@@ -367,10 +367,11 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	oriLastLogIndex := rf.GetLastLogIndex()
 	reply.NextIndex = appendIndex + len(args.Entries)
-	if reply.NextIndex <= rf.GetLastLogIndex() {
-		rf.log = append(append(rf.GetLeftSubLog(appendIndex), args.Entries...), rf.GetRightSubLog(reply.NextIndex)...)
-	} else {
+	if reply.NextIndex > rf.GetLastLogIndex() ||
+		len(args.Entries) > 0 && args.Entries[len(args.Entries)-1].Term > rf.GetTerm(reply.NextIndex) {
 		rf.log = append(rf.GetLeftSubLog(appendIndex), args.Entries...)
+	} else {
+		rf.log = append(append(rf.GetLeftSubLog(appendIndex), args.Entries...), rf.GetRightSubLog(reply.NextIndex)...)
 	}
 	rf.persist()
 	rf.DPrintf("[R%v T%v Raft.AppendEntries(R%v-T%v-%v)] lastLogIndex: %v -> %v | appendIndex: %v | nextIndex: %v\n",

@@ -20,7 +20,7 @@ const (
 
 func Key2Str(key interface{}) string {
 	ret := fmt.Sprintf("%v", key)
-	maxLen := 25
+	maxLen := 50
 	if len(ret) > maxLen {
 		ret = ret[0:maxLen] + "..."
 	}
@@ -29,7 +29,7 @@ func Key2Str(key interface{}) string {
 
 func Value2Str(value interface{}) string {
 	ret := fmt.Sprintf("%v", value)
-	maxLen := 100
+	maxLen := 1000
 	if len(ret) > maxLen {
 		ret = ret[0:maxLen] + "..."
 	}

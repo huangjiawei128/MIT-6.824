@@ -63,6 +63,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	ch := kv.GetProcessedOpCh(index)
 	kv.mu.Unlock()
 
+	timer := time.NewTimer(RpcTimeout * time.Millisecond)
 	select {
 	case executedOp := <-ch:
 		if executedOp.ClientId != startOp.ClientId || executedOp.Id != startOp.Id {
@@ -77,11 +78,12 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 			kv.DPrintf("[S%v KVServer.Get(C%v-%v)] %v V(%v) of K(%v) for C%v\n",
 				kv.me, args.ClientId, args.OpId, opType, Value2Str(reply.Value), Key2Str(args.Key), args.ClientId)
 		}
-	case <-time.After(RpcTimeout * time.Millisecond):
+	case <-timer.C:
 		reply.Err = ErrWrongLeader
 		kv.DPrintf("[S%v KVServer.Get(C%v-%v)] Refuse to %v V of K(%v) for C%v (rpc timeout)\n",
 			kv.me, args.ClientId, args.OpId, opType, Key2Str(args.Key), args.ClientId)
 	}
+	timer.Stop()
 
 	kv.mu.Lock()
 	kv.DeleteProcessedOpCh(index)
@@ -109,6 +111,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	ch := kv.GetProcessedOpCh(index)
 	kv.mu.Unlock()
 
+	timer := time.NewTimer(RpcTimeout * time.Millisecond)
 	select {
 	case executedOp := <-ch:
 		if executedOp.ClientId != startOp.ClientId || executedOp.Id != startOp.Id {
@@ -122,11 +125,12 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 			kv.DPrintf("[S%v KVServer.PutAppend(C%v-%v)] %v V(%v) of K(%v) for C%v\n",
 				kv.me, args.ClientId, args.OpId, opType, Value2Str(args.Value), Key2Str(args.Key), args.ClientId)
 		}
-	case <-time.After(RpcTimeout * time.Millisecond):
+	case <-timer.C:
 		reply.Err = ErrWrongLeader
 		kv.DPrintf("[S%v KVServer.PutAppend(C%v-%v)] Refuse to %v V(%v) of K(%v) for C%v (rpc timeout)\n",
 			kv.me, args.ClientId, args.OpId, opType, Value2Str(args.Value), Key2Str(args.Key), args.ClientId)
 	}
+	timer.Stop()
 
 	kv.mu.Lock()
 	kv.DeleteProcessedOpCh(index)
@@ -163,15 +167,24 @@ func (kv *KVServer) processor() {
 			// TODO
 		} else if m.CommandValid && m.CommandIndex > lastProcessed {
 			op := m.Command.(Op)
-			kv.DPrintf("[S%v KVServer.applier] Receive the op to be processed \"%v\"\n",
-				kv.me, op)
+			kv.DPrintf("[S%v KVServer.processor] Receive the op to be processed \"%v\" | index: %v | "+
+				"lastProcessed: %v\n",
+				kv.me, op, m.CommandIndex, lastProcessed)
 			kv.mu.Lock()
 			if op.Type == "Get" {
 				op.Value = kv.kvStore[op.Key]
 				kv.clientId2executedOpId[op.ClientId] = op.Id
-				kv.DPrintf("[S%v KVServer.applier] Execute the op \"%v\"\n",
+				kv.DPrintf("[S%v KVServer.processor] Execute the op \"%v\"\n",
 					kv.me, op)
 			} else {
+				oriExecutedOpId, ok := kv.clientId2executedOpId[op.ClientId]
+				if !ok {
+					kv.DPrintf("[S%v KVServer.processor] Haven't executed any ops of C%v\n",
+						kv.me, op.ClientId)
+				} else {
+					kv.DPrintf("[S%v KVServer.processor] The max executed op.Id of C%v is %v\n",
+						kv.me, op.ClientId, oriExecutedOpId)
+				}
 				opBeforeExecuted := kv.OpExecuted(op.ClientId, op.Id)
 				if !opBeforeExecuted {
 					switch op.Type {
@@ -181,20 +194,19 @@ func (kv *KVServer) processor() {
 						kv.kvStore[op.Key] += op.Value
 					}
 					kv.clientId2executedOpId[op.ClientId] = op.Id
-					kv.DPrintf("[S%v KVServer.applier] Execute the op \"%v\"\n",
-						kv.me, op)
+					kv.DPrintf("[S%v KVServer.processor] Execute the op \"%v\" | stored value: %v\n",
+						kv.me, op, kv.kvStore[op.Key])
 				} else {
-					kv.DPrintf("[S%v KVServer.applier] Refuse to execute the duplicated op \"%v\"\n",
-						kv.me, op)
+					kv.DPrintf("[S%v KVServer.processor] Refuse to execute the duplicated op \"%v\" | "+
+						"stored value: %v\n",
+						kv.me, op, kv.kvStore[op.Key])
 				}
 			}
 			ch := kv.GetProcessedOpCh(m.CommandIndex)
 			kv.mu.Unlock()
 
-			kv.DPrintf("[S%v KVServer.applier] Before return the processed op \"%v\"\n",
-				kv.me, op)
 			ch <- op
-			kv.DPrintf("[S%v KVServer.applier] After return the processed op \"%v\"\n",
+			kv.DPrintf("[S%v KVServer.processor] After return the processed op \"%v\"\n",
 				kv.me, op)
 			lastProcessed = m.CommandIndex
 		}

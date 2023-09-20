@@ -386,10 +386,12 @@ func (rf *Raft) electTicker() {
 
 func (rf *Raft) appendTicker() {
 	for rf.killed() == false {
+		timer := time.NewTimer(AppendPeriod * time.Millisecond)
 		select {
 		case <-rf.newCommand:
-		case <-time.After(AppendPeriod * time.Millisecond):
+		case <-timer.C:
 		}
+		timer.Stop()
 
 		rf.mu.Lock()
 		if rf.role != Leader {

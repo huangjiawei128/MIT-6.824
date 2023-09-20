@@ -68,7 +68,7 @@ func RandomTimeout() time.Duration {
 
 func Command2Str(command interface{}) string {
 	ret := fmt.Sprintf("%v", command)
-	maxLen := 200
+	maxLen := 1500
 	if len(ret) > maxLen {
 		ret = ret[0:maxLen] + "..."
 	}
@@ -118,8 +118,8 @@ func (rf *Raft) BecomeLeader() {
 		rf.nextIndex[server] = initialNextIndex
 		rf.matchIndex[server] = 0
 	}
-	rf.DPrintf("[R%v T%v Raft.BecomeLeader] role: %v -> Leader\n",
-		rf.me, rf.currentTerm, oriRole)
+	rf.DPrintf("[R%v T%v Raft.BecomeLeader] role: %v -> Leader | commitIndex: %v\n",
+		rf.me, rf.currentTerm, oriRole, rf.commitIndex)
 }
 
 func (rf *Raft) GetLastLogIndex() int {
@@ -169,9 +169,9 @@ func (rf *Raft) GetSubLog(leftIndex int, rightIndex int) []LogEntry {
 func (rf *Raft) GetMajorityMatchIndex() int {
 	matchIndexCopy := make([]int, len(rf.peers))
 	copy(matchIndexCopy, rf.matchIndex)
-	matchIndexCopy[rf.me] = 0
+	matchIndexCopy[rf.me] = rf.GetLastLogIndex()
 	sort.Ints(matchIndexCopy)
-	return matchIndexCopy[len(rf.peers)>>1+1]
+	return matchIndexCopy[len(rf.peers)>>1]
 }
 
 func (rf *Raft) UpToDate(index int, term int) bool {
