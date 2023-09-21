@@ -49,6 +49,34 @@ func (ck *Clerk) UpdateTargetLeader() {
 }
 
 //	==============================
+//	KVStore
+//	==============================
+type KVStore struct {
+	KVMap map[string]string
+}
+
+func (kvStore *KVStore) Get(key string) string {
+	return kvStore.KVMap[key]
+}
+
+func (kvStore *KVStore) Put(key string, value string) {
+	kvStore.KVMap[key] = value
+}
+
+func (kvStore *KVStore) Append(key string, value string) {
+	kvStore.KVMap[key] += value
+}
+
+func (kvStore *KVStore) PutAppend(key string, value string, opType string) {
+	switch opType {
+	case "Put":
+		kvStore.Put(key, value)
+	case "Append":
+		kvStore.Append(key, value)
+	}
+}
+
+//	==============================
 //	KVServer
 //	==============================
 func (kv *KVServer) DPrintf(format string, a ...interface{}) (n int, err error) {

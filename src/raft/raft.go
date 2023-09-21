@@ -109,11 +109,15 @@ type Raft struct {
 	matchIndex []int
 
 	// Other state
-	initialTime time.Time
-	role        Role
-	voteNum     int
-	applyCh     chan ApplyMsg
-	newCommand  chan bool
+	initialTime        time.Time
+	role               Role
+	voteNum            int
+	applyCh            chan ApplyMsg
+	nextApplyOrder     int
+	finishedApplyOrder int
+	applyCond          *sync.Cond
+
+	newCommand chan bool
 }
 
 // return currentTerm and whether this server
@@ -143,8 +147,7 @@ func (rf *Raft) stateData() []byte {
 	e.Encode(rf.log)
 	e.Encode(rf.lastIncludedIndex)
 	e.Encode(rf.lastIncludedTerm)
-	data := w.Bytes()
-	return data
+	return w.Bytes()
 }
 
 func (rf *Raft) persist() {
@@ -320,6 +323,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
+	rf.applyCond.Broadcast()
 	rf.DPrintf("[R%v] Be killed\n", rf.me)
 }
 
@@ -494,13 +498,28 @@ func (rf *Raft) applyTicker() {
 				"lastApplied: %v -> %v\n",
 				rf.me, rf.currentTerm, Command2Str(applyMsg.Command), applyMsg.CommandIndex, oriLastApplied, rf.lastApplied)
 		}
+		applyOrder := rf.nextApplyOrder
+		rf.nextApplyOrder++
+		for applyOrder != rf.finishedApplyOrder+1 && !rf.killed() {
+			rf.applyCond.Wait()
+		}
 		rf.mu.Unlock()
 
 		for _, applyMsg := range applyMsgs {
-			rf.ApplyDPrintf("[R%v Raft.applyTicker] Apply the command \"%v\" | index: %v\n",
-				rf.me, Command2Str(applyMsg.Command), applyMsg.CommandIndex)
 			rf.applyCh <- applyMsg
+			if applyMsg.SnapshotValid {
+				rf.ApplyDPrintf("[R%v Raft.applyTicker] Apply the snapshot | applyOrder: %v | index: %v | term: %v\n",
+					rf.me, applyOrder, applyMsg.SnapshotIndex, applyMsg.SnapshotTerm)
+			} else {
+				rf.ApplyDPrintf("[R%v Raft.applyTicker] Apply the command \"%v\" | applyOrder: %v | index: %v\n",
+					rf.me, Command2Str(applyMsg.Command), applyOrder, applyMsg.CommandIndex)
+			}
 		}
+
+		rf.mu.Lock()
+		rf.finishedApplyOrder = applyOrder
+		rf.applyCond.Broadcast()
+		rf.mu.Unlock()
 	}
 }
 
@@ -542,6 +561,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.role = Follower
 	rf.voteNum = 0
 	rf.applyCh = applyCh
+	rf.nextApplyOrder = 1
+	rf.finishedApplyOrder = 0
+	rf.applyCond = sync.NewCond(&rf.mu)
 	rf.newCommand = make(chan bool, 1)
 
 	// initialize from state persisted before a crash

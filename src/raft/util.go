@@ -44,7 +44,7 @@ func (rf *Raft) ApplyDPrintf(format string, a ...interface{}) (n int, err error)
 const (
 	MinTimeout   = 250
 	MaxTimeout   = 400
-	AppendPeriod = 75
+	AppendPeriod = 100
 	ApplyPeriod  = 10
 )
 
@@ -172,6 +172,10 @@ func (rf *Raft) GetMajorityMatchIndex() int {
 	matchIndexCopy[rf.me] = rf.GetLastLogIndex()
 	sort.Ints(matchIndexCopy)
 	return matchIndexCopy[len(rf.peers)>>1]
+}
+
+func (rf *Raft) GetPersister() *Persister {
+	return rf.persister
 }
 
 func (rf *Raft) UpToDate(index int, term int) bool {

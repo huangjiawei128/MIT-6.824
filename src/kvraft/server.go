@@ -4,6 +4,7 @@ import (
 	"6.824/labgob"
 	"6.824/labrpc"
 	"6.824/raft"
+	"bytes"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -40,7 +41,7 @@ type KVServer struct {
 	// Your definitions here.
 	clientId2executedOpId map[Int64Id]int
 	index2processedOpCh   map[int]chan Op
-	kvStore               map[string]string
+	kvStore               KVStore
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
@@ -159,51 +160,91 @@ func (kv *KVServer) killed() bool {
 	return z == 1
 }
 
+func (kv *KVServer) snapshotData() []byte {
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(kv.clientId2executedOpId)
+	e.Encode(kv.kvStore)
+	return w.Bytes()
+}
+
+func (kv *KVServer) readSnapshot(data []byte) {
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var clientId2executedOpId map[Int64Id]int
+	var kvStore KVStore
+	if d.Decode(&clientId2executedOpId) != nil ||
+		d.Decode(&kvStore) != nil {
+		errorMsg := fmt.Sprintf("[S%v KVServer.readSnapshot] Decode error\n", kv.me)
+		panic(errorMsg)
+	} else {
+		kv.clientId2executedOpId = clientId2executedOpId
+		kv.kvStore = kvStore
+	}
+}
+
 func (kv *KVServer) processor() {
 	lastProcessed := 0
 	for kv.killed() == false {
 		m := <-kv.applyCh
 		if m.SnapshotValid {
-			// TODO
+			kv.DPrintf("[S%v KVServer.processor] Receive the snapshot to be processed | index: %v | "+
+				"lastProcessed: %v | term: %v\n",
+				kv.me, m.SnapshotIndex, lastProcessed, m.SnapshotTerm)
+
+			kv.mu.Lock()
+			if kv.rf.CondInstallSnapshot(m.SnapshotTerm, m.SnapshotIndex, m.Snapshot) {
+				kv.readSnapshot(m.Snapshot)
+				lastProcessed = m.SnapshotIndex
+			}
+			kv.mu.Unlock()
 		} else if m.CommandValid && m.CommandIndex > lastProcessed {
 			op := m.Command.(Op)
 			kv.DPrintf("[S%v KVServer.processor] Receive the op to be processed \"%v\" | index: %v | "+
 				"lastProcessed: %v\n",
 				kv.me, op, m.CommandIndex, lastProcessed)
+
 			kv.mu.Lock()
+			oriExecutedOpId, ok := kv.clientId2executedOpId[op.ClientId]
+			if !ok {
+				kv.DPrintf("[S%v KVServer.processor] Haven't executed any ops of C%v\n",
+					kv.me, op.ClientId)
+			} else {
+				kv.DPrintf("[S%v KVServer.processor] The max executed op.Id of C%v is %v\n",
+					kv.me, op.ClientId, oriExecutedOpId)
+			}
+
 			if op.Type == "Get" {
-				op.Value = kv.kvStore[op.Key]
+				op.Value = kv.kvStore.Get(op.Key)
 				kv.clientId2executedOpId[op.ClientId] = op.Id
 				kv.DPrintf("[S%v KVServer.processor] Execute the op \"%v\"\n",
 					kv.me, op)
 			} else {
-				oriExecutedOpId, ok := kv.clientId2executedOpId[op.ClientId]
-				if !ok {
-					kv.DPrintf("[S%v KVServer.processor] Haven't executed any ops of C%v\n",
-						kv.me, op.ClientId)
-				} else {
-					kv.DPrintf("[S%v KVServer.processor] The max executed op.Id of C%v is %v\n",
-						kv.me, op.ClientId, oriExecutedOpId)
-				}
 				opBeforeExecuted := kv.OpExecuted(op.ClientId, op.Id)
 				if !opBeforeExecuted {
-					switch op.Type {
-					case "Put":
-						kv.kvStore[op.Key] = op.Value
-					case "Append":
-						kv.kvStore[op.Key] += op.Value
-					}
+					kv.kvStore.PutAppend(op.Key, op.Value, op.Type)
 					kv.clientId2executedOpId[op.ClientId] = op.Id
 					kv.DPrintf("[S%v KVServer.processor] Execute the op \"%v\" | stored value: %v\n",
-						kv.me, op, kv.kvStore[op.Key])
+						kv.me, op, kv.kvStore.Get(op.Key))
 				} else {
 					kv.DPrintf("[S%v KVServer.processor] Refuse to execute the duplicated op \"%v\" | "+
 						"stored value: %v\n",
-						kv.me, op, kv.kvStore[op.Key])
+						kv.me, op, kv.kvStore.Get(op.Key))
 				}
 			}
 			ch := kv.GetProcessedOpCh(m.CommandIndex)
 			kv.mu.Unlock()
+
+			raftStateSize := kv.rf.GetPersister().RaftStateSize()
+			if kv.maxraftstate > 0 && raftStateSize > kv.maxraftstate {
+				kv.DPrintf("[S%v KVServer.processor] Prepare snapshot data | index: %v | "+
+					"raftStateSize: %v > maxraftstate: %v > 0\n",
+					kv.me, m.CommandIndex, raftStateSize, kv.maxraftstate)
+				kv.mu.Lock()
+				snapshotData := kv.snapshotData()
+				kv.mu.Unlock()
+				kv.rf.Snapshot(m.CommandIndex, snapshotData)
+			}
 
 			ch <- op
 			kv.DPrintf("[S%v KVServer.processor] After return the processed op \"%v\"\n",
@@ -244,7 +285,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	// You may need initialization code here.
 	kv.clientId2executedOpId = make(map[Int64Id]int)
 	kv.index2processedOpCh = make(map[int]chan Op)
-	kv.kvStore = make(map[string]string)
+	kv.kvStore.KVMap = make(map[string]string)
 	kv.DPrintf("[S%v] Start new KV server | maxraftstate: %v\n",
 		kv.me, kv.maxraftstate)
 

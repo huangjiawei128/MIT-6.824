@@ -521,7 +521,19 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		"lastApplied: %v -> %v | commitIndex: %v -> %v\n",
 		rf.me, rf.currentTerm, applyMsg.SnapshotIndex, applyMsg.SnapshotTerm, oriLastApplied, rf.lastApplied,
 		oriCommitIndex, rf.commitIndex)
+	applyOrder := rf.nextApplyOrder
+	rf.nextApplyOrder++
+	for applyOrder != rf.finishedApplyOrder+1 && !rf.killed() {
+		rf.applyCond.Wait()
+	}
 	rf.mu.Unlock()
 
 	rf.applyCh <- applyMsg
+	rf.ApplyDPrintf("[R%v Raft.InstallSnapshot] Apply the snapshot | applyOrder: %v | index: %v | term: %v \n",
+		rf.me, applyOrder, applyMsg.SnapshotIndex, applyMsg.SnapshotTerm)
+
+	rf.mu.Lock()
+	rf.finishedApplyOrder = applyOrder
+	rf.applyCond.Broadcast()
+	rf.mu.Unlock()
 }
