@@ -74,8 +74,9 @@ type Coordinator struct {
 	MapChan    chan *Task
 	ReduceChan chan *Task
 
-	NextTaskId  int
-	TaskInfoMap map[int]*TaskInfo
+	NextTaskId        int
+	MapTaskInfoMap    map[int]*TaskInfo
+	ReduceTaskInfoMap map[int]*TaskInfo
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -86,27 +87,51 @@ func (c *Coordinator) GetNextTaskId() int {
 	return ret
 }
 
-func (c *Coordinator) StartTask(taskId int) bool {
-	taskInfo, ok := c.TaskInfoMap[taskId]
+func (c *Coordinator) GetTaskInfoMapPtr(taskKind TaskKind) *map[int]*TaskInfo {
+	var taskInfoMapPtr *map[int]*TaskInfo
+	switch taskKind {
+	case MapTask:
+		taskInfoMapPtr = &c.MapTaskInfoMap
+	case ReduceTask:
+		taskInfoMapPtr = &c.ReduceTaskInfoMap
+	}
+	return taskInfoMapPtr
+}
+
+func (c *Coordinator) GetTaskPtrChan(taskKind TaskKind) chan *Task {
+	var taskPtrChan chan *Task
+	switch taskKind {
+	case MapTask:
+		taskPtrChan = c.MapChan
+	case ReduceTask:
+		taskPtrChan = c.ReduceChan
+	}
+	return taskPtrChan
+}
+
+func (c *Coordinator) StartTask(taskId int, taskKind TaskKind) bool {
+	taskInfoMapPtr := c.GetTaskInfoMapPtr(taskKind)
+	taskInfo, ok := (*taskInfoMapPtr)[taskId]
 	if ok && taskInfo.State == Idle {
-		c.TaskInfoMap[taskId].State = Doing
-		c.TaskInfoMap[taskId].StartTime = time.Now()
+		(*taskInfoMapPtr)[taskId].State = Doing
+		(*taskInfoMapPtr)[taskId].StartTime = time.Now()
 		return true
 	}
 	return false
 }
 
-func (c *Coordinator) EndTask(taskId int) bool {
-	taskInfo, ok := c.TaskInfoMap[taskId]
+func (c *Coordinator) EndTask(taskId int, taskKind TaskKind) bool {
+	taskInfoMapPtr := c.GetTaskInfoMapPtr(taskKind)
+	taskInfo, ok := (*taskInfoMapPtr)[taskId]
 	if ok && taskInfo.State != Done {
-		c.TaskInfoMap[taskId].State = Done
+		(*taskInfoMapPtr)[taskId].State = Done
 		return true
 	}
 	return false
 }
 
 func (c *Coordinator) AllMapTasksDone() bool {
-	for _, taskInfo := range c.TaskInfoMap {
+	for _, taskInfo := range c.MapTaskInfoMap {
 		if taskInfo.Ptr.TaskKind == MapTask && taskInfo.State != Done {
 			return false
 		}
@@ -115,7 +140,7 @@ func (c *Coordinator) AllMapTasksDone() bool {
 }
 
 func (c *Coordinator) AllReduceTasksDone() bool {
-	for _, taskInfo := range c.TaskInfoMap {
+	for _, taskInfo := range c.ReduceTaskInfoMap {
 		if taskInfo.Ptr.TaskKind == ReduceTask && taskInfo.State != Done {
 			return false
 		}
@@ -137,7 +162,7 @@ func (c *Coordinator) ProduceMapTasks() {
 			Ptr:   &task,
 		}
 
-		c.TaskInfoMap[task.TaskId] = &taskInfo
+		c.MapTaskInfoMap[task.TaskId] = &taskInfo
 		fmt.Println("[Coordinator] Produce a new map task:", task)
 		c.MapChan <- &task
 	}
@@ -165,7 +190,7 @@ func (c *Coordinator) ProduceReduceTasks() {
 			Ptr:   &task,
 		}
 
-		c.TaskInfoMap[task.TaskId] = &taskInfo
+		c.ReduceTaskInfoMap[task.TaskId] = &taskInfo
 		fmt.Println("[Coordinator] Produce a new reduce task:", task)
 		c.ReduceChan <- &task
 	}
@@ -188,7 +213,7 @@ func (c *Coordinator) DistributeTask(args *DistributeTaskArgs, reply *Distribute
 			}
 			if flag {
 				reply.Task = *tempTask
-				if !c.StartTask(reply.Task.TaskId) {
+				if !c.StartTask(reply.Task.TaskId, reply.Task.TaskKind) {
 					fmt.Printf("[Coordinator] Start map task %v repeatedly\n", reply.Task.TaskId)
 				}
 			} else {
@@ -209,7 +234,7 @@ func (c *Coordinator) DistributeTask(args *DistributeTaskArgs, reply *Distribute
 			}
 			if flag {
 				reply.Task = *tempTask
-				if !c.StartTask(reply.Task.TaskId) {
+				if !c.StartTask(reply.Task.TaskId, reply.Task.TaskKind) {
 					fmt.Printf("[Coordinator] Start reduce task %v repeatedly\n", reply.Task.TaskId)
 				}
 			} else {
@@ -234,7 +259,7 @@ func (c *Coordinator) DealTaskDone(args *DealTaskDoneArgs, reply *DealTaskDoneRe
 	//	fmt.Println("[Coordinator] TaskDone dealer tries to get lock")
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.EndTask(args.TaskId) {
+	if !c.EndTask(args.TaskId, args.TaskKind) {
 		fmt.Printf("[Coordinator] End task %v repeatedly\n", args.TaskId)
 	} else {
 		fmt.Println("[Coordinator] Notify all wait routines when task has been done")
@@ -279,20 +304,28 @@ func (c *Coordinator) DetectCrash() {
 		}
 		curTime := time.Now()
 		crash := false
-		for _, taskInfo := range c.TaskInfoMap {
+
+		var taskKind TaskKind
+		switch c.Phase {
+		case MapPhase:
+			taskKind = MapTask
+		case ReduceTask:
+			taskKind = ReduceTask
+		}
+		taskInfoMapPtr := c.GetTaskInfoMapPtr(taskKind)
+		taskPtrChan := c.GetTaskPtrChan(taskKind)
+
+		for _, taskInfo := range *taskInfoMapPtr {
 			if taskInfo.State != Doing {
 				continue
 			}
 			if curTime.Sub(taskInfo.StartTime) > time.Second*MAX_WAIT_SECOND {
 				taskInfo.State = Idle
-				if c.Phase == MapPhase {
-					c.MapChan <- taskInfo.Ptr
-				} else if c.Phase == ReducePhase {
-					c.ReduceChan <- taskInfo.Ptr
-				}
+				taskPtrChan <- taskInfo.Ptr
 				crash = true
 			}
 		}
+
 		if crash {
 			fmt.Println("[Coordinator] Notify all wait routines when crash happens")
 			c.cond.Broadcast()
@@ -327,8 +360,9 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		MapChan:    make(chan *Task, len(files)),
 		ReduceChan: make(chan *Task, nReduce),
 
-		NextTaskId:  0,
-		TaskInfoMap: make(map[int]*TaskInfo),
+		NextTaskId:        0,
+		MapTaskInfoMap:    make(map[int]*TaskInfo),
+		ReduceTaskInfoMap: make(map[int]*TaskInfo),
 	}
 	c.cond = sync.NewCond(&c.mu)
 

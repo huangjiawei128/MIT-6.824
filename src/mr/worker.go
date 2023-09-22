@@ -95,7 +95,8 @@ func AskForTask() (*Task, bool) {
 
 func InformTaskDone(task *Task) bool {
 	args := DealTaskDoneArgs{
-		TaskId: task.TaskId,
+		TaskId:   task.TaskId,
+		TaskKind: task.TaskKind,
 	}
 	reply := DealTaskDoneReply{}
 

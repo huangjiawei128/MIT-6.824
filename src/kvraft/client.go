@@ -76,11 +76,12 @@ func (ck *Clerk) Get(key string) string {
 		if ok {
 			ck.DPrintf("[C%v Clerk.Get(%v)] Receive Get ACK from S%v | err: %v | key: %v | value: %v\n",
 				ck.clientId, args.OpId, ck.targetLeader, reply.Err, key, reply.Value)
-			if reply.Err == OK {
+			switch reply.Err {
+			case OK:
 				ret = reply.Value
-			} else if reply.Err == ErrNoKey {
+			case ErrNoKey:
 				ret = ""
-			} else if reply.Err == ErrWrongLeader {
+			case ErrWrongLeader:
 				ok = false
 				ck.UpdateTargetLeader()
 			}

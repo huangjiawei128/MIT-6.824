@@ -59,7 +59,8 @@ type DistributeTaskReply struct {
 }
 
 type DealTaskDoneArgs struct {
-	TaskId int
+	TaskId   int
+	TaskKind TaskKind
 }
 
 type DealTaskDoneReply struct {
