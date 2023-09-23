@@ -4,14 +4,28 @@ package shardctrler
 // Shardctrler clerk.
 //
 
-import "6.824/labrpc"
+import (
+	"6.824/labrpc"
+	"fmt"
+)
 import "time"
 import "crypto/rand"
 import "math/big"
 
+type Int64Id int64
+
+func (id Int64Id) String() string {
+	ret := fmt.Sprintf("%v", int64(id))
+	maxLen := 6
+	return ret[0:maxLen]
+}
+
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// Your data here.
+	clientId     Int64Id
+	nextOpId     int
+	targetLeader int
 }
 
 func nrand() int64 {

@@ -367,11 +367,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	oriLastLogIndex := rf.GetLastLogIndex()
 	reply.NextIndex = appendIndex + len(args.Entries)
-	if reply.NextIndex > rf.GetLastLogIndex() ||
+	if reply.NextIndex > oriLastLogIndex ||
 		len(args.Entries) > 0 && args.Entries[len(args.Entries)-1].Term > rf.GetTerm(reply.NextIndex) {
 		rf.log = append(rf.GetLeftSubLog(appendIndex), args.Entries...)
 	} else {
-		rf.log = append(append(rf.GetLeftSubLog(appendIndex), args.Entries...), rf.GetRightSubLog(reply.NextIndex)...)
+		//	rf.log = append(append(rf.GetLeftSubLog(appendIndex), args.Entries...), rf.GetRightSubLog(reply.NextIndex)...)
+		rf.log = append(rf.GetLeftSubLog(appendIndex), args.Entries...)
+		rf.log = rf.GetLeftSubLog(oriLastLogIndex + 1)
 	}
 	rf.persist()
 	rf.DPrintf("[R%v T%v Raft.AppendEntries(R%v-T%v-%v)] lastLogIndex: %v -> %v | appendIndex: %v | nextIndex: %v\n",

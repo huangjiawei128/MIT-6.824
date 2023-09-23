@@ -11,13 +11,34 @@ import (
 	"time"
 )
 
+type OpType int
+
+const (
+	GetV = iota
+	PutKV
+	AppendKV
+)
+
+func (opType OpType) String() string {
+	var ret string
+	switch opType {
+	case GetV:
+		ret = "Get"
+	case PutKV:
+		ret = "Put"
+	case AppendKV:
+		ret = "Append"
+	}
+	return ret
+}
+
 type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
 	Id       int
 	ClientId Int64Id
-	Type     string
+	Type     OpType
 	Key      string
 	Value    string
 }
@@ -46,7 +67,7 @@ type KVServer struct {
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
-	opType := "Get"
+	opType := OpType(GetV)
 	startOp := Op{
 		Id:       args.OpId,
 		ClientId: args.ClientId,
@@ -97,7 +118,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	startOp := Op{
 		Id:       args.OpId,
 		ClientId: args.ClientId,
-		Type:     opType,
+		Type:     args.Op,
 		Key:      args.Key,
 		Value:    args.Value,
 	}
@@ -214,7 +235,7 @@ func (kv *KVServer) processor() {
 					kv.me, op.ClientId, oriExecutedOpId)
 			}
 
-			if op.Type == "Get" {
+			if op.Type == GetV {
 				op.Value = kv.kvStore.Get(op.Key)
 				kv.clientId2executedOpId[op.ClientId] = op.Id
 				kv.DPrintf("[S%v KVServer.processor] Execute the op \"%v\"\n",

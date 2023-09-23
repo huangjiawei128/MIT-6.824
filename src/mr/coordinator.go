@@ -87,15 +87,15 @@ func (c *Coordinator) GetNextTaskId() int {
 	return ret
 }
 
-func (c *Coordinator) GetTaskInfoMapPtr(taskKind TaskKind) *map[int]*TaskInfo {
-	var taskInfoMapPtr *map[int]*TaskInfo
+func (c *Coordinator) GetTaskInfoMap(taskKind TaskKind) map[int]*TaskInfo {
+	var taskInfoMap map[int]*TaskInfo
 	switch taskKind {
 	case MapTask:
-		taskInfoMapPtr = &c.MapTaskInfoMap
+		taskInfoMap = c.MapTaskInfoMap
 	case ReduceTask:
-		taskInfoMapPtr = &c.ReduceTaskInfoMap
+		taskInfoMap = c.ReduceTaskInfoMap
 	}
-	return taskInfoMapPtr
+	return taskInfoMap
 }
 
 func (c *Coordinator) GetTaskPtrChan(taskKind TaskKind) chan *Task {
@@ -110,21 +110,21 @@ func (c *Coordinator) GetTaskPtrChan(taskKind TaskKind) chan *Task {
 }
 
 func (c *Coordinator) StartTask(taskId int, taskKind TaskKind) bool {
-	taskInfoMapPtr := c.GetTaskInfoMapPtr(taskKind)
-	taskInfo, ok := (*taskInfoMapPtr)[taskId]
+	taskInfoMap := c.GetTaskInfoMap(taskKind)
+	taskInfo, ok := taskInfoMap[taskId]
 	if ok && taskInfo.State == Idle {
-		(*taskInfoMapPtr)[taskId].State = Doing
-		(*taskInfoMapPtr)[taskId].StartTime = time.Now()
+		taskInfoMap[taskId].State = Doing
+		taskInfoMap[taskId].StartTime = time.Now()
 		return true
 	}
 	return false
 }
 
 func (c *Coordinator) EndTask(taskId int, taskKind TaskKind) bool {
-	taskInfoMapPtr := c.GetTaskInfoMapPtr(taskKind)
-	taskInfo, ok := (*taskInfoMapPtr)[taskId]
+	taskInfoMap := c.GetTaskInfoMap(taskKind)
+	taskInfo, ok := taskInfoMap[taskId]
 	if ok && taskInfo.State != Done {
-		(*taskInfoMapPtr)[taskId].State = Done
+		taskInfoMap[taskId].State = Done
 		return true
 	}
 	return false
@@ -312,10 +312,10 @@ func (c *Coordinator) DetectCrash() {
 		case ReduceTask:
 			taskKind = ReduceTask
 		}
-		taskInfoMapPtr := c.GetTaskInfoMapPtr(taskKind)
+		taskInfoMap := c.GetTaskInfoMap(taskKind)
 		taskPtrChan := c.GetTaskPtrChan(taskKind)
 
-		for _, taskInfo := range *taskInfoMapPtr {
+		for _, taskInfo := range taskInfoMap {
 			if taskInfo.State != Doing {
 				continue
 			}

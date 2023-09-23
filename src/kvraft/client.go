@@ -110,9 +110,14 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	args := PutAppendArgs{
 		Key:      key,
 		Value:    value,
-		Op:       op,
 		ClientId: ck.clientId,
 		OpId:     ck.nextOpId,
+	}
+	switch op {
+	case "Put":
+		args.Op = PutKV
+	case "Append":
+		args.Op = AppendKV
 	}
 	ok := false
 	for !ok {
