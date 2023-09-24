@@ -498,6 +498,12 @@ func (rf *Raft) applyTicker() {
 				"lastApplied: %v -> %v\n",
 				rf.me, rf.currentTerm, Command2Str(applyMsg.Command), applyMsg.CommandIndex, oriLastApplied, rf.lastApplied)
 		}
+
+		if len(applyMsgs) == 0 {
+			rf.mu.Unlock()
+			continue
+		}
+
 		applyOrder := rf.nextApplyOrder
 		rf.nextApplyOrder++
 		for applyOrder != rf.finishedApplyOrder+1 && !rf.killed() {

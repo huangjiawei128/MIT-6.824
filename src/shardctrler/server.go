@@ -274,23 +274,27 @@ func (sc *ShardCtrler) GetNewConfigAfterJoinOp(servers map[int][]string) *Config
 	ret.Num++
 
 	for gid, serverList := range servers {
-		ret.Groups[gid] = make([]string, 0)
-		copy(ret.Groups[gid], serverList)
+		ret.Groups[gid] = serverList
 	}
 
 	gid2shards := make(map[int][]int)
+	leftShards := make([]int, 0)
 	for gid, _ := range ret.Groups {
 		gid2shards[gid] = make([]int, 0)
 	}
 	for shard := 0; shard < NShards; shard++ {
 		gid := ret.Shards[shard]
-		gid2shards[gid] = append(gid2shards[gid], shard)
+		if gid == 0 {
+			leftShards = append(leftShards, shard)
+		} else {
+			gid2shards[gid] = append(gid2shards[gid], shard)
+		}
 	}
-	leftShards := make([]int, 0)
 
 	//	Do load re-balance to adjust ret.Shards
-	sc.DPrintf("[S%v ShardCtrler.GetNewConfigAfterJoinOp] New config before rebalance: %v\n",
-		sc.me, ret)
+	sc.DPrintf("[S%v ShardCtrler.GetNewConfigAfterJoinOp] New config before rebalance: %v | "+
+		"gid2shards: %v | leftShards: %v\n",
+		sc.me, ret, gid2shards, leftShards)
 	ret.Rebalance(gid2shards, leftShards)
 	sc.DPrintf("[S%v ShardCtrler.GetNewConfigAfterJoinOp] New config After rebalance: %v\n",
 		sc.me, ret)
@@ -389,18 +393,7 @@ func (sc *ShardCtrler) processor() {
 			}
 
 			if op.Type == QueryCF {
-				configNum := op.ConfigNum
-				maxConfigNum := len(sc.configs) - 1
-				if configNum > maxConfigNum {
-					configNum = maxConfigNum
-				}
-				if configNum < 0 {
-					configNum = maxConfigNum + 1 + configNum
-					if configNum < 0 {
-						configNum = 0
-					}
-				}
-
+				configNum := sc.GetValidConfigNum(op.ConfigNum)
 				op.Config = &sc.configs[configNum]
 				sc.clientId2executedOpId[op.ClientId] = op.Id
 			} else {

@@ -127,6 +127,11 @@ func (ck *Clerk) UpdateTargetLeader() {
 //	==============================
 //	Config
 //	==============================
+func (config *Config) DPrintf(format string, a ...interface{}) (n int, err error) {
+	DPrintf(format, a...)
+	return
+}
+
 func getRGInfos(gid2Shards map[int][]int) []RGInfo {
 	rgInfos := make([]RGInfo, 0)
 	for gid, shards := range gid2Shards {
@@ -134,6 +139,9 @@ func getRGInfos(gid2Shards map[int][]int) []RGInfo {
 	}
 
 	sort.Slice(rgInfos, func(i, j int) bool {
+		if rgInfos[i].ShardNum == rgInfos[j].ShardNum {
+			return rgInfos[i].GID < rgInfos[j].GID
+		}
 		return rgInfos[i].ShardNum < rgInfos[j].ShardNum
 	})
 	return rgInfos
@@ -152,49 +160,57 @@ func getGoalShardNum(shardsNum int, rgNum int) []int {
 }
 
 func (config *Config) Rebalance(gid2Shards map[int][]int, leftShards []int) {
-	rgNum := len(config.Groups) - 1
+	rgNum := len(config.Groups)
 	if rgNum != len(gid2Shards) {
-		errMsg := fmt.Sprintf("[CF%v Config.Rebalance] rgNum != len(gid2Shards)\n", config.Num)
+		errMsg := fmt.Sprintf("[CF%v Config.Rebalance] rgNum %v != len(gid2Shards) %v\n",
+			config.Num, rgNum, len(gid2Shards))
 		panic(errMsg)
+	}
+
+	if rgNum == 0 {
+		for i := 0; i < NShards; i++ {
+			config.Shards[i] = 0
+		}
+		return
 	}
 
 	rgInfos := getRGInfos(gid2Shards)
 	goalShardNum := getGoalShardNum(NShards, rgNum)
+	config.DPrintf("[CF%v Config.Rebalance] rgInfos: %v | goalShardNum: %v\n",
+		config.Num, rgInfos, goalShardNum)
 
-	toBalanceMin, toBalanceMax := 0, rgNum-1
-	for ; toBalanceMax >= 0; toBalanceMax-- {
-		newLeftShardNum := rgInfos[toBalanceMax].ShardNum - goalShardNum[toBalanceMax]
+	for i := rgNum - 1; i >= 0; i-- {
+		newLeftShardNum := rgInfos[i].ShardNum - goalShardNum[i]
+		gid := rgInfos[i].GID
 		if newLeftShardNum <= 0 {
-			break
-		}
-
-		for i := 0; i < newLeftShardNum; i++ {
-			leftShards = append(leftShards, gid2Shards[toBalanceMax][i])
-		}
-	}
-
-	leftShardsIndex := 0
-	for ; toBalanceMin <= toBalanceMax; toBalanceMin++ {
-		fillShardNum := goalShardNum[toBalanceMin] - rgInfos[toBalanceMin].ShardNum
-		if fillShardNum < 0 {
-			errMsg := fmt.Sprintf("[CF%v Config.Rebalance] "+
-				"goalShardNum[toBalanceMin] < rgInfos[toBalanceMin].ShardNum\n", config.Num)
-			panic(errMsg)
-		}
-		if fillShardNum == 0 {
-			break
-		}
-
-		if rgInfos[toBalanceMin].ShardNum == goalShardNum[toBalanceMin] {
-			toBalanceMin++
 			continue
 		}
 
-		for i := 0; i < fillShardNum; i++ {
-			shard, gid := leftShards[leftShardsIndex], toBalanceMin
-			config.Shards[shard] = gid
+		leftShards = append(leftShards, gid2Shards[gid][:newLeftShardNum]...)
+		rgInfos[i].ShardNum = goalShardNum[i]
+	}
+	config.DPrintf("[CF%v Config.Rebalance] leftShards after adjusting: %v\n",
+		config.Num, leftShards)
+
+	leftShardsIndex := 0
+	for i := 0; i < rgNum; i++ {
+		fillShardNum := goalShardNum[i] - rgInfos[i].ShardNum
+		if fillShardNum < 0 {
+			errMsg := fmt.Sprintf("[CF%v Config.Rebalance] After adjusting leftShards: "+
+				"goalShardNum[%v] %v < rgInfos[%v].ShardNum %v\n",
+				config.Num, i, goalShardNum[i], i, rgInfos[i].ShardNum)
+			panic(errMsg)
+		}
+		if fillShardNum == 0 {
+			continue
+		}
+
+		gid := rgInfos[i].GID
+		for j := 0; j < fillShardNum; j++ {
+			config.Shards[leftShards[leftShardsIndex]] = gid
 			leftShardsIndex++
 		}
+		rgInfos[i].ShardNum = goalShardNum[i]
 	}
 }
 
@@ -227,11 +243,25 @@ func (sc *ShardCtrler) OpExecuted(clientId Int64Id, opId int) bool {
 	return opId <= executedOpId
 }
 
+func (sc *ShardCtrler) GetValidConfigNum(configNum int) int {
+	maxConfigNum := len(sc.configs) - 1
+	if configNum > maxConfigNum {
+		configNum = maxConfigNum
+	}
+	if configNum < 0 {
+		configNum = maxConfigNum + 1 + configNum
+		if configNum < 0 {
+			configNum = 0
+		}
+	}
+	return configNum
+}
+
 func (sc *ShardCtrler) DeepCopyConfig(dst *Config, src *Config) {
 	dst.Num = src.Num
 	dst.Shards = src.Shards
+	dst.Groups = make(map[int][]string)
 	for gid, serverList := range src.Groups {
-		dst.Groups[gid] = make([]string, 0)
-		copy(dst.Groups[gid], serverList)
+		dst.Groups[gid] = serverList
 	}
 }
