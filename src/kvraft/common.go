@@ -93,6 +93,13 @@ func (ck *Clerk) DPrintf(format string, a ...interface{}) (n int, err error) {
 	return
 }
 
+func (ck *Clerk) BasicInfo(methodName string) string {
+	if methodName == "" {
+		return fmt.Sprintf("C%v Clerk", ck.clientId)
+	}
+	return fmt.Sprintf("C%v Clerk.%v", ck.clientId, methodName)
+}
+
 func (ck *Clerk) UpdateTargetLeader() {
 	ck.targetLeader = (ck.targetLeader + 1) % len(ck.servers)
 }
@@ -133,6 +140,13 @@ func (kv *KVServer) DPrintf(format string, a ...interface{}) (n int, err error) 
 		DPrintf(format, a...)
 	}
 	return
+}
+
+func (kv *KVServer) BasicInfo(methodName string) string {
+	if methodName == "" {
+		return fmt.Sprintf("S%v KVServer", kv.me)
+	}
+	return fmt.Sprintf("S%v KVServer.%v", kv.me, methodName)
 }
 
 func (kv *KVServer) GetProcessedOpCh(index int) chan Op {

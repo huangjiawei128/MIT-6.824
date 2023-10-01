@@ -6,6 +6,7 @@ import (
 	"6.824/raft"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -16,6 +17,8 @@ type ShardCtrler struct {
 	applyCh chan raft.ApplyMsg
 
 	// Your data here.
+	dead int32 // set by Kill()
+
 	configs               []Config // indexed by config num
 	clientId2executedOpId map[Int64Id]int
 	index2processedOpCh   map[int]chan Op
@@ -75,6 +78,8 @@ func (op Op) String() string {
 }
 
 func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
+	basicInfo := sc.BasicInfo("Join")
+
 	// Your code here.
 	opType := OpType(JoinRG)
 	startOp := Op{
@@ -86,8 +91,8 @@ func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
 	index, _, isLeader := sc.rf.Start(startOp)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
-		sc.DPrintf("[S%v ShardCtrler.Join(C%v-%v)] Refuse to %v RG(servers: %v) for C%v (isn't the leader)\n",
-			sc.me, args.ClientId, args.OpId, opType, args.Servers, args.ClientId)
+		sc.DPrintf("[%v(C%v-%v)] Refuse to %v RG(servers: %v) for C%v (isn't the leader)\n",
+			basicInfo, args.ClientId, args.OpId, opType, args.Servers, args.ClientId)
 		return
 	}
 	sc.mu.Lock()
@@ -99,19 +104,19 @@ func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
 	case executedOp := <-ch:
 		if executedOp.ClientId != startOp.ClientId || executedOp.Id != startOp.Id {
 			reply.Err = ErrWrongLeader
-			sc.DPrintf("[S%v ShardCtrler.Join(C%v-%v)] Refuse to %v RG(servers: %v) for C%v "+
+			sc.DPrintf("[%v(C%v-%v)] Refuse to %v RG(servers: %v) for C%v "+
 				"(don't match op identifier at I%v: (%v,%v) VS (%v,%v))\n",
-				sc.me, args.ClientId, args.OpId, opType, args.Servers, args.ClientId,
+				basicInfo, args.ClientId, args.OpId, opType, args.Servers, args.ClientId,
 				index, executedOp.ClientId, executedOp.Id, startOp.ClientId, startOp.Id)
 		} else {
 			reply.Err = OK
-			sc.DPrintf("[S%v ShardCtrler.Join(C%v-%v)] %v RG(servers: %v) for C%v\n",
-				sc.me, args.ClientId, args.OpId, opType, args.Servers, args.ClientId)
+			sc.DPrintf("[%v(C%v-%v)] %v RG(servers: %v) for C%v\n",
+				basicInfo, args.ClientId, args.OpId, opType, args.Servers, args.ClientId)
 		}
 	case <-timer.C:
 		reply.Err = ErrWrongLeader
-		sc.DPrintf("[S%v ShardCtrler.Join(C%v-%v)] Refuse to %v RG(servers: %v) for C%v (rpc timeout)\n",
-			sc.me, args.ClientId, args.OpId, opType, args.Servers, args.ClientId)
+		sc.DPrintf("[%v(C%v-%v)] Refuse to %v RG(servers: %v) for C%v (rpc timeout)\n",
+			basicInfo, args.ClientId, args.OpId, opType, args.Servers, args.ClientId)
 	}
 	timer.Stop()
 
@@ -121,6 +126,8 @@ func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
 }
 
 func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
+	basicInfo := sc.BasicInfo("Leave")
+
 	// Your code here.
 	opType := OpType(LeaveRG)
 	startOp := Op{
@@ -132,8 +139,8 @@ func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
 	index, _, isLeader := sc.rf.Start(startOp)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
-		sc.DPrintf("[S%v ShardCtrler.Leave(C%v-%v)] Refuse to %v RG(gids: %v) for C%v (isn't the leader)\n",
-			sc.me, args.ClientId, args.OpId, opType, args.GIDs, args.ClientId)
+		sc.DPrintf("[%v(C%v-%v)] Refuse to %v RG(gids: %v) for C%v (isn't the leader)\n",
+			basicInfo, args.ClientId, args.OpId, opType, args.GIDs, args.ClientId)
 		return
 	}
 	sc.mu.Lock()
@@ -145,19 +152,19 @@ func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
 	case executedOp := <-ch:
 		if executedOp.ClientId != startOp.ClientId || executedOp.Id != startOp.Id {
 			reply.Err = ErrWrongLeader
-			sc.DPrintf("[S%v ShardCtrler.Leave(C%v-%v)] Refuse to %v RG(gids: %v) for C%v "+
+			sc.DPrintf("[%v(C%v-%v)] Refuse to %v RG(gids: %v) for C%v "+
 				"(don't match op identifier at I%v: (%v,%v) VS (%v,%v))\n",
-				sc.me, args.ClientId, args.OpId, opType, args.GIDs, args.ClientId,
+				basicInfo, args.ClientId, args.OpId, opType, args.GIDs, args.ClientId,
 				index, executedOp.ClientId, executedOp.Id, startOp.ClientId, startOp.Id)
 		} else {
 			reply.Err = OK
-			sc.DPrintf("[S%v ShardCtrler.Leave(C%v-%v)] %v RG(gids: %v) for C%v\n",
-				sc.me, args.ClientId, args.OpId, opType, args.GIDs, args.ClientId)
+			sc.DPrintf("[%v(C%v-%v)] %v RG(gids: %v) for C%v\n",
+				basicInfo, args.ClientId, args.OpId, opType, args.GIDs, args.ClientId)
 		}
 	case <-timer.C:
 		reply.Err = ErrWrongLeader
-		sc.DPrintf("[S%v ShardCtrler.Leave(C%v-%v)] Refuse to %v RG(gids: %v) for C%v (rpc timeout)\n",
-			sc.me, args.ClientId, args.OpId, opType, args.GIDs, args.ClientId)
+		sc.DPrintf("[%v(C%v-%v)] Refuse to %v RG(gids: %v) for C%v (rpc timeout)\n",
+			basicInfo, args.ClientId, args.OpId, opType, args.GIDs, args.ClientId)
 	}
 	timer.Stop()
 
@@ -167,6 +174,8 @@ func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
 }
 
 func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
+	basicInfo := sc.BasicInfo("Move")
+
 	// Your code here.
 	opType := OpType(MoveSD)
 	startOp := Op{
@@ -180,8 +189,8 @@ func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
 	index, _, isLeader := sc.rf.Start(startOp)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
-		sc.DPrintf("[S%v ShardCtrler.Move(C%v-%v)] Refuse to %v SD%v to RG%v for C%v (isn't the leader)\n",
-			sc.me, args.ClientId, args.OpId, opType, args.Shard, args.GID, args.ClientId)
+		sc.DPrintf("[%v(C%v-%v)] Refuse to %v SD%v to RG%v for C%v (isn't the leader)\n",
+			basicInfo, args.ClientId, args.OpId, opType, args.Shard, args.GID, args.ClientId)
 		return
 	}
 	sc.mu.Lock()
@@ -193,19 +202,19 @@ func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
 	case executedOp := <-ch:
 		if executedOp.ClientId != startOp.ClientId || executedOp.Id != startOp.Id {
 			reply.Err = ErrWrongLeader
-			sc.DPrintf("[S%v ShardCtrler.Move(C%v-%v)] Refuse to %v SD%v to RG%v for C%v "+
+			sc.DPrintf("[%v(C%v-%v)] Refuse to %v SD%v to RG%v for C%v "+
 				"(don't match op identifier at I%v: (%v,%v) VS (%v,%v))\n",
-				sc.me, args.ClientId, args.OpId, opType, args.Shard, args.GID, args.ClientId,
+				basicInfo, args.ClientId, args.OpId, opType, args.Shard, args.GID, args.ClientId,
 				index, executedOp.ClientId, executedOp.Id, startOp.ClientId, startOp.Id)
 		} else {
 			reply.Err = OK
-			sc.DPrintf("[S%v ShardCtrler.Move(C%v-%v)] %v SD%v to RG%v for C%v\n",
-				sc.me, args.ClientId, args.OpId, opType, args.Shard, args.GID, args.ClientId)
+			sc.DPrintf("[%v(C%v-%v)] %v SD%v to RG%v for C%v\n",
+				basicInfo, args.ClientId, args.OpId, opType, args.Shard, args.GID, args.ClientId)
 		}
 	case <-timer.C:
 		reply.Err = ErrWrongLeader
-		sc.DPrintf("[S%v ShardCtrler.Move(C%v-%v)] Refuse to %v SD%v to RG%v for C%v (rpc timeout)\n",
-			sc.me, args.ClientId, args.OpId, opType, args.Shard, args.GID, args.ClientId)
+		sc.DPrintf("[%v(C%v-%v)] Refuse to %v SD%v to RG%v for C%v (rpc timeout)\n",
+			basicInfo, args.ClientId, args.OpId, opType, args.Shard, args.GID, args.ClientId)
 	}
 	timer.Stop()
 
@@ -215,6 +224,8 @@ func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
 }
 
 func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
+	basicInfo := sc.BasicInfo("Query")
+
 	// Your code here.
 	opType := OpType(QueryCF)
 	startOp := Op{
@@ -226,8 +237,8 @@ func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
 	index, _, isLeader := sc.rf.Start(startOp)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
-		sc.DPrintf("[S%v ShardCtrler.Query(C%v-%v)] Refuse to %v CF%v for C%v (isn't the leader)\n",
-			sc.me, args.ClientId, args.OpId, opType, args.Num, args.ClientId)
+		sc.DPrintf("[%v(C%v-%v)] Refuse to %v CF%v for C%v (isn't the leader)\n",
+			basicInfo, args.ClientId, args.OpId, opType, args.Num, args.ClientId)
 		return
 	}
 	sc.mu.Lock()
@@ -239,20 +250,20 @@ func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
 	case executedOp := <-ch:
 		if executedOp.ClientId != startOp.ClientId || executedOp.Id != startOp.Id {
 			reply.Err = ErrWrongLeader
-			sc.DPrintf("[S%v ShardCtrler.Query(C%v-%v)] Refuse to %v CF%v for C%v "+
+			sc.DPrintf("[%v(C%v-%v)] Refuse to %v CF%v for C%v "+
 				"(don't match op identifier at I%v: (%v,%v) VS (%v,%v))\n",
-				sc.me, args.ClientId, args.OpId, opType, args.Num, args.ClientId,
+				basicInfo, args.ClientId, args.OpId, opType, args.Num, args.ClientId,
 				index, executedOp.ClientId, executedOp.Id, startOp.ClientId, startOp.Id)
 		} else {
 			reply.Err = OK
 			reply.Config = *executedOp.Config
-			sc.DPrintf("[S%v ShardCtrler.Query(C%v-%v)] %v CF%v(%v) for C%v\n",
-				sc.me, args.ClientId, args.OpId, opType, args.Num, reply.Config, args.ClientId)
+			sc.DPrintf("[%v(C%v-%v)] %v CF%v(%v) for C%v\n",
+				basicInfo, args.ClientId, args.OpId, opType, args.Num, reply.Config, args.ClientId)
 		}
 	case <-timer.C:
 		reply.Err = ErrWrongLeader
-		sc.DPrintf("[S%v ShardCtrler.Query(C%v-%v)] Refuse to %v CF%v for C%v (rpc timeout)\n",
-			sc.me, args.ClientId, args.OpId, opType, args.Num, args.ClientId)
+		sc.DPrintf("[%v(C%v-%v)] Refuse to %v CF%v for C%v (rpc timeout)\n",
+			basicInfo, args.ClientId, args.OpId, opType, args.Num, args.ClientId)
 	}
 	timer.Stop()
 
@@ -262,10 +273,12 @@ func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
 }
 
 func (sc *ShardCtrler) GetNewConfigAfterJoinOp(servers map[int][]string) *Config {
+	basicInfo := sc.BasicInfo("GetNewConfigAfterJoinOp")
+
 	ret := &Config{}
 	lastConfigIndex := len(sc.configs) - 1
 	if lastConfigIndex < 0 {
-		errMsg := fmt.Sprintf("[S%v ShardCtrler.GetNewConfigAfterJoinOp] lastConfigIndex < 0\n", sc.me)
+		errMsg := fmt.Sprintf("[%v] lastConfigIndex < 0\n", basicInfo)
 		panic(errMsg)
 	}
 	lastConfig := &sc.configs[lastConfigIndex]
@@ -292,21 +305,22 @@ func (sc *ShardCtrler) GetNewConfigAfterJoinOp(servers map[int][]string) *Config
 	}
 
 	//	Do load re-balance to adjust ret.Shards
-	sc.DPrintf("[S%v ShardCtrler.GetNewConfigAfterJoinOp] New config before rebalance: %v | "+
-		"gid2shards: %v | leftShards: %v\n",
-		sc.me, ret, gid2shards, leftShards)
+	sc.DPrintf("[%v] New config before rebalance: %v | gid2shards: %v | leftShards: %v\n",
+		basicInfo, ret, gid2shards, leftShards)
 	ret.Rebalance(gid2shards, leftShards)
-	sc.DPrintf("[S%v ShardCtrler.GetNewConfigAfterJoinOp] New config After rebalance: %v\n",
-		sc.me, ret)
+	sc.DPrintf("[%v] New config After rebalance: %v\n",
+		basicInfo, ret)
 
 	return ret
 }
 
 func (sc *ShardCtrler) GetNewConfigAfterLeaveOp(gids []int) *Config {
+	basicInfo := sc.BasicInfo("GetNewConfigAfterLeaveOp")
+
 	ret := &Config{}
 	lastConfigIndex := len(sc.configs) - 1
 	if lastConfigIndex < 0 {
-		errMsg := fmt.Sprintf("[S%v ShardCtrler.GetNewConfigAfterLeaveOp] lastConfigIndex < 0\n", sc.me)
+		errMsg := fmt.Sprintf("[%v] lastConfigIndex < 0\n", basicInfo)
 		panic(errMsg)
 	}
 	lastConfig := &sc.configs[lastConfigIndex]
@@ -331,20 +345,22 @@ func (sc *ShardCtrler) GetNewConfigAfterLeaveOp(gids []int) *Config {
 	}
 
 	//	Do load re-balance to adjust ret.Shards
-	sc.DPrintf("[S%v ShardCtrler.GetNewConfigAfterLeaveOp] New config before rebalance: %v\n",
-		sc.me, ret)
+	sc.DPrintf("[%v] New config before rebalance: %v\n",
+		basicInfo, ret)
 	ret.Rebalance(gid2shards, leftShards)
-	sc.DPrintf("[S%v ShardCtrler.GetNewConfigAfterLeaveOp] New config After rebalance: %v\n",
-		sc.me, ret)
+	sc.DPrintf("[%v] New config After rebalance: %v\n",
+		basicInfo, ret)
 
 	return ret
 }
 
 func (sc *ShardCtrler) GetNewConfigAfterMoveOp(shard int, gid int) *Config {
+	basicInfo := sc.BasicInfo("GetNewConfigAfterMoveOp")
+
 	ret := &Config{}
 	lastConfigIndex := len(sc.configs) - 1
 	if lastConfigIndex < 0 {
-		errMsg := fmt.Sprintf("[S%v ShardCtrler.GetNewConfigAfterMoveOp] lastConfigIndex < 0\n", sc.me)
+		errMsg := fmt.Sprintf("[%v] lastConfigIndex < 0\n", basicInfo)
 		panic(errMsg)
 	}
 	lastConfig := &sc.configs[lastConfigIndex]
@@ -363,8 +379,17 @@ func (sc *ShardCtrler) GetNewConfigAfterMoveOp(shard int, gid int) *Config {
 // turn off debug output from this instance.
 //
 func (sc *ShardCtrler) Kill() {
+	basicInfo := sc.BasicInfo("Kill")
+
+	atomic.StoreInt32(&sc.dead, 1)
 	sc.rf.Kill()
 	// Your code here, if desired.
+	sc.DPrintf("[%v] Be killed\n", basicInfo)
+}
+
+func (sc *ShardCtrler) killed() bool {
+	z := atomic.LoadInt32(&sc.dead)
+	return z == 1
 }
 
 // needed by shardkv tester
@@ -373,23 +398,24 @@ func (sc *ShardCtrler) Raft() *raft.Raft {
 }
 
 func (sc *ShardCtrler) processor() {
+	basicInfo := sc.BasicInfo("processor")
+
 	lastProcessed := 0
 	for {
 		m := <-sc.applyCh
 		if m.CommandValid && m.CommandIndex > lastProcessed {
 			op := m.Command.(Op)
-			sc.DPrintf("[S%v ShardCtrler.processor] Receive the op to be processed \"%v\" | index: %v | "+
-				"lastProcessed: %v\n",
-				sc.me, op, m.CommandIndex, lastProcessed)
+			sc.DPrintf("[%v] Receive the op to be processed \"%v\" | index: %v | lastProcessed: %v\n",
+				basicInfo, op, m.CommandIndex, lastProcessed)
 
 			sc.mu.Lock()
 			oriExecutedOpId, ok := sc.clientId2executedOpId[op.ClientId]
 			if !ok {
-				sc.DPrintf("[S%v ShardCtrler.processor] Haven't executed any ops of C%v\n",
-					sc.me, op.ClientId)
+				sc.DPrintf("[%v] Haven't executed any ops of C%v\n",
+					basicInfo, op.ClientId)
 			} else {
-				sc.DPrintf("[S%v ShardCtrler.processor] The max executed op.Id of C%v is %v\n",
-					sc.me, op.ClientId, oriExecutedOpId)
+				sc.DPrintf("[%v] The max executed op.Id of C%v is %v\n",
+					basicInfo, op.ClientId, oriExecutedOpId)
 			}
 
 			if op.Type == QueryCF {
@@ -410,19 +436,19 @@ func (sc *ShardCtrler) processor() {
 					}
 					sc.configs = append(sc.configs, *newConfig)
 					sc.clientId2executedOpId[op.ClientId] = op.Id
-					sc.DPrintf("[S%v ShardCtrler.processor] Execute the op \"%v\" | newConfig: %v\n",
-						sc.me, op, newConfig)
+					sc.DPrintf("[%v] Execute the op \"%v\" | newConfig: %v\n",
+						basicInfo, op, newConfig)
 				} else {
-					sc.DPrintf("[S%v ShardCtrler.processor] Refuse to execute the duplicated op \"%v\"\n",
-						sc.me, op)
+					sc.DPrintf("[%v] Refuse to execute the duplicated op \"%v\"\n",
+						basicInfo, op)
 				}
 			}
 			ch := sc.GetProcessedOpCh(m.CommandIndex)
 			sc.mu.Unlock()
 
 			ch <- op
-			sc.DPrintf("[S%v ShardCtrler.processor] After return the processed op \"%v\"\n",
-				sc.me, op)
+			sc.DPrintf("[%v] After return the processed op \"%v\"\n",
+				basicInfo, op)
 			lastProcessed = m.CommandIndex
 		}
 	}
@@ -448,7 +474,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 	// Your code here.
 	sc.clientId2executedOpId = make(map[Int64Id]int)
 	sc.index2processedOpCh = make(map[int]chan Op)
-	sc.DPrintf("[S%v] Start new shard controller\n", sc.me)
+	sc.DPrintf("[%v] Start new shard controller\n", sc.BasicInfo(""))
 
 	go sc.processor()
 

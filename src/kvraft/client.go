@@ -40,8 +40,8 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	mathRand.Seed(time.Now().Unix() + int64(ck.clientId))
 	ck.nextOpId = 0
 	ck.targetLeader = mathRand.Intn(len(servers))
-	ck.DPrintf("[C%v] Make new clerk | targetLeader: %v\n",
-		ck.clientId, ck.targetLeader)
+	ck.DPrintf("[%v] Make new KV clerk | targetLeader: %v\n",
+		ck.BasicInfo(""), ck.targetLeader)
 	return ck
 }
 
@@ -58,6 +58,8 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 // arguments. and reply must be passed as a pointer.
 //
 func (ck *Clerk) Get(key string) string {
+	basicInfo := ck.BasicInfo("Get")
+
 	// You will have to modify this function.
 	args := GetArgs{
 		Key:      key,
@@ -68,14 +70,14 @@ func (ck *Clerk) Get(key string) string {
 	ret := ""
 	for !ok {
 		reply := GetReply{}
-		ck.DPrintf("[C%v Clerk.Get(%v)] Send Get RPC to S%v | key: %v\n",
-			ck.clientId, args.OpId, ck.targetLeader, key)
+		ck.DPrintf("[%v(%v)] Send Get RPC to S%v | key: %v\n",
+			basicInfo, args.OpId, ck.targetLeader, key)
 
 		ok = ck.servers[ck.targetLeader].Call("KVServer.Get", &args, &reply)
 
 		if ok {
-			ck.DPrintf("[C%v Clerk.Get(%v)] Receive Get ACK from S%v | err: %v | key: %v | value: %v\n",
-				ck.clientId, args.OpId, ck.targetLeader, reply.Err, key, reply.Value)
+			ck.DPrintf("[%v(%v)] Receive Get ACK from S%v | err: %v | key: %v | value: %v\n",
+				basicInfo, args.OpId, ck.targetLeader, reply.Err, key, reply.Value)
 			switch reply.Err {
 			case OK:
 				ret = reply.Value
@@ -86,8 +88,8 @@ func (ck *Clerk) Get(key string) string {
 				ck.UpdateTargetLeader()
 			}
 		} else {
-			ck.DPrintf("[C%v Clerk.Get(%v)] Fail to receive Get ACK from S%v | key: %v\n",
-				ck.clientId, args.OpId, ck.targetLeader, key)
+			ck.DPrintf("[%v(%v)] Fail to receive Get ACK from S%v | key: %v\n",
+				basicInfo, args.OpId, ck.targetLeader, key)
 			ck.UpdateTargetLeader()
 		}
 	}
@@ -106,6 +108,8 @@ func (ck *Clerk) Get(key string) string {
 // arguments. and reply must be passed as a pointer.
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
+	basicInfo := ck.BasicInfo("PutAppend")
+
 	// You will have to modify this function.
 	args := PutAppendArgs{
 		Key:      key,
@@ -122,21 +126,21 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	ok := false
 	for !ok {
 		reply := PutAppendReply{}
-		ck.DPrintf("[C%v Clerk.PutAppend(%v)] Send PutAppend RPC to S%v | op: %v | key: %v | value: %v\n",
-			ck.clientId, args.OpId, ck.targetLeader, args.Op, key, value)
+		ck.DPrintf("[%v(%v)] Send PutAppend RPC to S%v | op: %v | key: %v | value: %v\n",
+			basicInfo, args.OpId, ck.targetLeader, args.Op, key, value)
 
 		ok = ck.servers[ck.targetLeader].Call("KVServer.PutAppend", &args, &reply)
 
 		if ok {
-			ck.DPrintf("[C%v Clerk.PutAppend(%v)] Receive PutAppend ACK from S%v | err: %v | key: %v | value: %v\n",
-				ck.clientId, args.OpId, ck.targetLeader, reply.Err, key, value)
+			ck.DPrintf("[%v(%v)] Receive PutAppend ACK from S%v | err: %v | key: %v | value: %v\n",
+				basicInfo, args.OpId, ck.targetLeader, reply.Err, key, value)
 			if reply.Err == ErrWrongLeader {
 				ok = false
 				ck.UpdateTargetLeader()
 			}
 		} else {
-			ck.DPrintf("[C%v Clerk.PutAppend(%v)] Fail to receive PutAppend ACK from S%v | key: %v | value: %v\n",
-				ck.clientId, args.OpId, ck.targetLeader, key, value)
+			ck.DPrintf("[%v(%v)] Fail to receive PutAppend ACK from S%v | key: %v | value: %v\n",
+				basicInfo, args.OpId, ck.targetLeader, key, value)
 			ck.UpdateTargetLeader()
 		}
 	}

@@ -1,6 +1,9 @@
 package shardkv
 
-import "6.824/porcupine"
+import (
+	"6.824/porcupine"
+	"log"
+)
 import "6.824/models"
 import "testing"
 import "strconv"
@@ -49,6 +52,7 @@ func TestStaticShards(t *testing.T) {
 	// make sure that the data really is sharded by
 	// shutting down one shard and checking that some
 	// Get()s don't succeed.
+	log.Printf("Shut down group %d\n", 1)
 	cfg.ShutdownGroup(1)
 	cfg.checklogs() // forbid snapshots
 

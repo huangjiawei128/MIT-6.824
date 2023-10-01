@@ -41,6 +41,27 @@ func (rf *Raft) ApplyDPrintf(format string, a ...interface{}) (n int, err error)
 	return
 }
 
+func (rf *Raft) BasicInfo(methodName string) string {
+	if methodName == "" {
+		return fmt.Sprintf("R%v Raft", rf.me)
+	}
+	return fmt.Sprintf("R%v Raft.%v", rf.me, methodName)
+}
+
+func (rf *Raft) BasicInfoWithTerm(methodName string) string {
+	if methodName == "" {
+		return fmt.Sprintf("R%v T%v Raft", rf.me, rf.currentTerm)
+	}
+	return fmt.Sprintf("R%v T%v Raft.%v", rf.me, rf.currentTerm, methodName)
+}
+
+func (rf *Raft) BasicInfoWithTermChange(methodName string, oriTerm int) string {
+	if methodName == "" {
+		return fmt.Sprintf("R%v T%v->T%v Raft", rf.me, oriTerm, rf.currentTerm)
+	}
+	return fmt.Sprintf("R%v T%v->T%v Raft.%v", rf.me, oriTerm, rf.currentTerm, methodName)
+}
+
 const (
 	MinTimeout   = 250
 	MaxTimeout   = 400
@@ -82,35 +103,40 @@ func (rf *Raft) ResetInitialTime() {
 func (rf *Raft) BecomeFollower(term int) {
 	oriTerm := rf.currentTerm
 	oriRole := rf.role
-	if term < oriTerm {
-		errorMsg := fmt.Sprintf("[R%v T%v->T%v Raft.BecomeFollower] Term can't decrease\n",
-			rf.me, oriTerm, term)
+	rf.currentTerm = term
+	basicInfo := rf.BasicInfoWithTermChange("BecomeFollower", oriTerm)
+
+	if rf.currentTerm < oriTerm {
+		errorMsg := fmt.Sprintf("[%v] Term can't decrease\n", basicInfo)
 		panic(errorMsg)
 	}
-	if term > oriTerm {
-		rf.currentTerm = term
+	if rf.currentTerm > oriTerm {
 		rf.votedFor = -1
 		rf.persist()
 	}
 	rf.role = Follower
 	rf.voteNum = 0
-	rf.DPrintf("[R%v T%v->T%v Raft.BecomeFollower] role: %v -> Follower\n",
-		rf.me, oriTerm, rf.currentTerm, oriRole)
+	rf.DPrintf("[%v] role: %v -> Follower\n",
+		basicInfo, oriRole)
 }
 
 func (rf *Raft) BecomeCandidate() {
 	oriTerm := rf.currentTerm
 	oriRole := rf.role
 	rf.currentTerm++
+	basicInfo := rf.BasicInfoWithTermChange("BecomeCandidate", oriTerm)
+
 	rf.votedFor = rf.me
 	rf.persist()
 	rf.role = Candidate
 	rf.voteNum = 1
-	rf.DPrintf("[R%v T%v->T%v Raft.BecomeCandidate] role: %v -> Candidate\n",
-		rf.me, oriTerm, rf.currentTerm, oriRole)
+	rf.DPrintf("[%v] role: %v -> Candidate\n",
+		basicInfo, oriRole)
 }
 
 func (rf *Raft) BecomeLeader() {
+	basicInfo := rf.BasicInfoWithTerm("BecomeLeader")
+
 	oriRole := rf.role
 	rf.role = Leader
 	initialNextIndex := rf.GetLastLogIndex() + 1
@@ -118,8 +144,8 @@ func (rf *Raft) BecomeLeader() {
 		rf.nextIndex[server] = initialNextIndex
 		rf.matchIndex[server] = 0
 	}
-	rf.DPrintf("[R%v T%v Raft.BecomeLeader] role: %v -> Leader | commitIndex: %v\n",
-		rf.me, rf.currentTerm, oriRole, rf.commitIndex)
+	rf.DPrintf("[%v] role: %v -> Leader | commitIndex: %v\n",
+		basicInfo, oriRole, rf.commitIndex)
 }
 
 func (rf *Raft) GetLastLogIndex() int {

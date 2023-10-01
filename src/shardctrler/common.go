@@ -120,8 +120,19 @@ func (ck *Clerk) DPrintf(format string, a ...interface{}) (n int, err error) {
 	return
 }
 
+func (ck *Clerk) BasicInfo(methodName string) string {
+	if methodName == "" {
+		return fmt.Sprintf("Ctrler-C%v Clerk", ck.clientId)
+	}
+	return fmt.Sprintf("Ctrler-C%v Clerk.%v", ck.clientId, methodName)
+}
+
 func (ck *Clerk) UpdateTargetLeader() {
 	ck.targetLeader = (ck.targetLeader + 1) % len(ck.servers)
+}
+
+func (ck *Clerk) GetClientId() Int64Id {
+	return ck.clientId
 }
 
 //	==============================
@@ -130,6 +141,13 @@ func (ck *Clerk) UpdateTargetLeader() {
 func (config *Config) DPrintf(format string, a ...interface{}) (n int, err error) {
 	DPrintf(format, a...)
 	return
+}
+
+func (config *Config) BasicInfo(methodName string) string {
+	if methodName == "" {
+		return fmt.Sprintf("CF%v Config", config.Num)
+	}
+	return fmt.Sprintf("CF%v Config.%v", config.Num, methodName)
 }
 
 func getRGInfos(gid2Shards map[int][]int) []RGInfo {
@@ -160,10 +178,12 @@ func getGoalShardNum(shardsNum int, rgNum int) []int {
 }
 
 func (config *Config) Rebalance(gid2Shards map[int][]int, leftShards []int) {
+	basicInfo := config.BasicInfo("Rebalance")
+
 	rgNum := len(config.Groups)
 	if rgNum != len(gid2Shards) {
-		errMsg := fmt.Sprintf("[CF%v Config.Rebalance] rgNum %v != len(gid2Shards) %v\n",
-			config.Num, rgNum, len(gid2Shards))
+		errMsg := fmt.Sprintf("[%v] rgNum %v != len(gid2Shards) %v\n",
+			basicInfo, rgNum, len(gid2Shards))
 		panic(errMsg)
 	}
 
@@ -176,8 +196,8 @@ func (config *Config) Rebalance(gid2Shards map[int][]int, leftShards []int) {
 
 	rgInfos := getRGInfos(gid2Shards)
 	goalShardNum := getGoalShardNum(NShards, rgNum)
-	config.DPrintf("[CF%v Config.Rebalance] rgInfos: %v | goalShardNum: %v\n",
-		config.Num, rgInfos, goalShardNum)
+	config.DPrintf("[%v] rgInfos: %v | goalShardNum: %v\n",
+		basicInfo, rgInfos, goalShardNum)
 
 	for i := rgNum - 1; i >= 0; i-- {
 		newLeftShardNum := rgInfos[i].ShardNum - goalShardNum[i]
@@ -189,16 +209,15 @@ func (config *Config) Rebalance(gid2Shards map[int][]int, leftShards []int) {
 		leftShards = append(leftShards, gid2Shards[gid][:newLeftShardNum]...)
 		rgInfos[i].ShardNum = goalShardNum[i]
 	}
-	config.DPrintf("[CF%v Config.Rebalance] leftShards after adjusting: %v\n",
-		config.Num, leftShards)
+	config.DPrintf("[%v] leftShards after adjusting: %v\n",
+		basicInfo, leftShards)
 
 	leftShardsIndex := 0
 	for i := 0; i < rgNum; i++ {
 		fillShardNum := goalShardNum[i] - rgInfos[i].ShardNum
 		if fillShardNum < 0 {
-			errMsg := fmt.Sprintf("[CF%v Config.Rebalance] After adjusting leftShards: "+
-				"goalShardNum[%v] %v < rgInfos[%v].ShardNum %v\n",
-				config.Num, i, goalShardNum[i], i, rgInfos[i].ShardNum)
+			errMsg := fmt.Sprintf("[%v] After adjusting leftShards: goalShardNum[%v] %v < rgInfos[%v].ShardNum %v\n",
+				basicInfo, i, goalShardNum[i], i, rgInfos[i].ShardNum)
 			panic(errMsg)
 		}
 		if fillShardNum == 0 {
@@ -218,8 +237,17 @@ func (config *Config) Rebalance(gid2Shards map[int][]int, leftShards []int) {
 //	ShardCtrler
 //	==============================
 func (sc *ShardCtrler) DPrintf(format string, a ...interface{}) (n int, err error) {
-	DPrintf(format, a...)
+	if !sc.killed() {
+		DPrintf(format, a...)
+	}
 	return
+}
+
+func (sc *ShardCtrler) BasicInfo(methodName string) string {
+	if methodName == "" {
+		return fmt.Sprintf("S%v ShardCtrler", sc.me)
+	}
+	return fmt.Sprintf("S%v ShardCtrler.%v", sc.me, methodName)
 }
 
 func (sc *ShardCtrler) GetProcessedOpCh(index int) chan Op {

@@ -167,6 +167,8 @@ func (rf *Raft) persist() {
 // restore previously persisted state.
 //
 func (rf *Raft) readPersist(data []byte) {
+	basicInfo := rf.BasicInfo("readPersist")
+
 	if data == nil || len(data) < 1 { // bootstrap without any state?
 		return
 	}
@@ -197,7 +199,7 @@ func (rf *Raft) readPersist(data []byte) {
 		d.Decode(&log) != nil ||
 		d.Decode(&lastIncludedIndex) != nil ||
 		d.Decode(&lastIncludedTerm) != nil {
-		errorMsg := fmt.Sprintf("[R%v Raft.readPersist] Decode error\n", rf.me)
+		errorMsg := fmt.Sprintf("[%v] Decode error\n", basicInfo)
 		panic(errorMsg)
 	} else {
 		rf.currentTerm = currentTerm
@@ -225,6 +227,8 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 // service no longer needs the log through (and including)
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
+	methodName := "Snapshot"
+
 	// Your code here (2D).
 	if rf.killed() {
 		return
@@ -234,14 +238,14 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	defer rf.mu.Unlock()
 
 	if index <= rf.lastIncludedIndex {
-		rf.DPrintf("[R%v T%v Raft.Snapshot] Fail to make the snapshot (have ahead lastIncludedIndex: %v VS %v)\n",
-			rf.me, rf.currentTerm, rf.lastIncludedIndex, index)
+		rf.DPrintf("[%v] Fail to make the snapshot (have ahead lastIncludedIndex: %v VS %v)\n",
+			rf.BasicInfoWithTerm(methodName), rf.lastIncludedIndex, index)
 		return
 	}
 
-	rf.DPrintf("[R%v T%v Raft.Snapshot] Before make the snapshot: "+
+	rf.DPrintf("[%v] Before make the snapshot: "+
 		"lastLogIndex: %v | lastIncludedIndex: %v | lastIncludedTerm: %v | len(log): %v\n",
-		rf.me, rf.currentTerm, rf.GetLastLogIndex(), rf.lastIncludedIndex, rf.lastIncludedTerm, len(rf.log))
+		rf.BasicInfoWithTerm(methodName), rf.GetLastLogIndex(), rf.lastIncludedIndex, rf.lastIncludedTerm, len(rf.log))
 
 	newLog := make([]LogEntry, 1)
 	if rf.GetLastLogIndex() > index {
@@ -253,8 +257,8 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 
 	rf.lastApplied = Max(rf.lastApplied, rf.lastIncludedIndex)
 	rf.commitIndex = Max(rf.commitIndex, rf.lastIncludedIndex)
-	rf.DPrintf("[R%v T%v Raft.Snapshot] Make the snapshot | index: %v | term: %v | len(log): %v\n",
-		rf.me, rf.currentTerm, rf.lastIncludedIndex, rf.lastIncludedTerm, len(rf.log))
+	rf.DPrintf("[%v] Make the snapshot | index: %v | term: %v | len(log): %v\n",
+		rf.BasicInfoWithTerm(methodName), rf.lastIncludedIndex, rf.lastIncludedTerm, len(rf.log))
 }
 
 //
@@ -272,6 +276,8 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 // the leader.
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
+	methodName := "Start"
+
 	index := -1
 	term := -1
 	isLeader := false
@@ -290,8 +296,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	defer rf.mu.Unlock()
 
 	if rf.role != Leader {
-		rf.DPrintf("[R%v T%v Raft.Start] Fail to append the command \"%v\" (isn't the leader)\n",
-			rf.me, rf.currentTerm, Command2Str(command))
+		rf.DPrintf("[%v] Fail to append the command \"%v\" (isn't the leader)\n",
+			rf.BasicInfoWithTerm(methodName), Command2Str(command))
 	} else {
 		index = rf.GetLastLogIndex() + 1
 		term = rf.currentTerm
@@ -302,8 +308,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		}
 		rf.log = append(rf.log, logEntry)
 		rf.persist()
-		rf.DPrintf("[R%v T%v Raft.Start] Append the command \"%v\" | index: %v\n",
-			rf.me, rf.currentTerm, Command2Str(command), index)
+		rf.DPrintf("[%v] Append the command \"%v\" | index: %v\n",
+			rf.BasicInfoWithTerm(methodName), Command2Str(command), index)
 	}
 
 	return index, term, isLeader
@@ -321,10 +327,12 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 // should call killed() to check whether it should stop.
 //
 func (rf *Raft) Kill() {
+	basicInfo := rf.BasicInfo("Kill")
+
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
 	rf.applyCond.Broadcast()
-	rf.DPrintf("[R%v] Be killed\n", rf.me)
+	rf.DPrintf("[%v] Be killed\n", basicInfo)
 }
 
 func (rf *Raft) killed() bool {
@@ -335,6 +343,8 @@ func (rf *Raft) killed() bool {
 // The ticker go routine starts a new election if this peer hasn't received
 // heartsbeats recently.
 func (rf *Raft) electTicker() {
+	methodName := "electTicker"
+
 	for rf.killed() == false {
 
 		// Your code here to check if a leader election should
@@ -363,8 +373,7 @@ func (rf *Raft) electTicker() {
 		rf.BecomeCandidate()
 		rf.ResetInitialTime()
 
-		rf.DPrintf("[R%v T%v Raft.electTicker] Start to request vote\n",
-			rf.me, rf.currentTerm)
+		rf.DPrintf("[%v] Start to request vote\n", rf.BasicInfoWithTerm(methodName))
 		for server := range rf.peers {
 			if server == rf.me {
 				continue
@@ -389,6 +398,8 @@ func (rf *Raft) electTicker() {
 }
 
 func (rf *Raft) appendTicker() {
+	methodName := "appendTicker"
+
 	for rf.killed() == false {
 		timer := time.NewTimer(AppendPeriod * time.Millisecond)
 		select {
@@ -403,8 +414,7 @@ func (rf *Raft) appendTicker() {
 			continue
 		}
 
-		rf.DPrintf("[R%v T%v Raft.appendTicker] Start to append entries\n",
-			rf.me, rf.currentTerm)
+		rf.DPrintf("[%v] Start to append entries\n", rf.BasicInfoWithTerm(methodName))
 		for server := range rf.peers {
 			if server == rf.me {
 				continue
@@ -443,21 +453,23 @@ func (rf *Raft) appendTicker() {
 }
 
 func (rf *Raft) applyTicker() {
+	methodName := "applyTicker"
+
 	for rf.killed() == false {
 		time.Sleep(ApplyPeriod * time.Millisecond)
 
 		rf.mu.Lock()
 		if rf.lastApplied > rf.commitIndex {
-			errorMsg := fmt.Sprintf("[R%v T%v Raft.applyTicker] lastApplied > commitIndex: %v VS %v\n",
-				rf.me, rf.currentTerm, rf.lastApplied, rf.commitIndex)
+			errorMsg := fmt.Sprintf("[%v] lastApplied > commitIndex: %v VS %v\n",
+				rf.BasicInfoWithTerm(methodName), rf.lastApplied, rf.commitIndex)
 			rf.mu.Unlock()
 			panic(errorMsg)
 		}
 
 		lastLogIndex := rf.GetLastLogIndex()
 		if rf.commitIndex > lastLogIndex {
-			errorMsg := fmt.Sprintf("[R%v T%v Raft.applyTicker] commitIndex > lastLogIndex: %v VS %v\n",
-				rf.me, rf.currentTerm, rf.commitIndex, lastLogIndex)
+			errorMsg := fmt.Sprintf("[%v] commitIndex > lastLogIndex: %v VS %v\n",
+				rf.BasicInfoWithTerm(methodName), rf.commitIndex, lastLogIndex)
 			rf.mu.Unlock()
 			panic(errorMsg)
 		}
@@ -477,10 +489,10 @@ func (rf *Raft) applyTicker() {
 			oriCommitIndex := rf.commitIndex
 			rf.lastApplied = rf.lastIncludedIndex
 			rf.commitIndex = Max(rf.commitIndex, rf.lastApplied)
-			rf.ApplyDPrintf("[R%v T%v Raft.applyTicker] Prepare to apply the snapshot | index: %v | term: %v | "+
+			rf.ApplyDPrintf("[%v] Prepare to apply the snapshot | index: %v | term: %v | "+
 				"lastApplied: %v -> %v | commitIndex: %v -> %v\n",
-				rf.me, rf.currentTerm, applyMsg.SnapshotIndex, applyMsg.SnapshotTerm, oriLastApplied, rf.lastApplied,
-				oriCommitIndex, rf.commitIndex)
+				rf.BasicInfoWithTerm(methodName), applyMsg.SnapshotIndex, applyMsg.SnapshotTerm,
+				oriLastApplied, rf.lastApplied, oriCommitIndex, rf.commitIndex)
 		}
 
 		for rf.lastApplied < rf.commitIndex {
@@ -494,9 +506,9 @@ func (rf *Raft) applyTicker() {
 			applyMsgs = append(applyMsgs, applyMsg)
 			oriLastApplied := rf.lastApplied
 			rf.lastApplied = applyIndex
-			rf.ApplyDPrintf("[R%v T%v Raft.applyTicker] Prepare to apply the command \"%v\" | index: %v | "+
-				"lastApplied: %v -> %v\n",
-				rf.me, rf.currentTerm, Command2Str(applyMsg.Command), applyMsg.CommandIndex, oriLastApplied, rf.lastApplied)
+			rf.ApplyDPrintf("[%v] Prepare to apply the command \"%v\" | index: %v | lastApplied: %v -> %v\n",
+				rf.BasicInfoWithTerm(methodName), Command2Str(applyMsg.Command), applyMsg.CommandIndex,
+				oriLastApplied, rf.lastApplied)
 		}
 
 		if len(applyMsgs) == 0 {
@@ -514,11 +526,11 @@ func (rf *Raft) applyTicker() {
 		for _, applyMsg := range applyMsgs {
 			rf.applyCh <- applyMsg
 			if applyMsg.SnapshotValid {
-				rf.ApplyDPrintf("[R%v Raft.applyTicker] Apply the snapshot | applyOrder: %v | index: %v | term: %v\n",
-					rf.me, applyOrder, applyMsg.SnapshotIndex, applyMsg.SnapshotTerm)
+				rf.ApplyDPrintf("[%v] Apply the snapshot | applyOrder: %v | index: %v | term: %v\n",
+					rf.BasicInfo(methodName), applyOrder, applyMsg.SnapshotIndex, applyMsg.SnapshotTerm)
 			} else {
-				rf.ApplyDPrintf("[R%v Raft.applyTicker] Apply the command \"%v\" | applyOrder: %v | index: %v\n",
-					rf.me, Command2Str(applyMsg.Command), applyOrder, applyMsg.CommandIndex)
+				rf.ApplyDPrintf("[%v] Apply the command \"%v\" | applyOrder: %v | index: %v\n",
+					rf.BasicInfo(methodName), Command2Str(applyMsg.Command), applyOrder, applyMsg.CommandIndex)
 			}
 		}
 
@@ -574,8 +586,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
-	rf.DPrintf("[R%v] Make new raft | currentTerm: %v | votedFor: %v | lastIncludedIndex: %v | lastIncludedTerm: %v\n",
-		rf.me, rf.currentTerm, rf.votedFor, rf.lastIncludedIndex, rf.lastIncludedTerm)
+	rf.DPrintf("[%v] Make new raft | currentTerm: %v | votedFor: %v | lastIncludedIndex: %v | lastIncludedTerm: %v\n",
+		rf.BasicInfo(""), rf.currentTerm, rf.votedFor, rf.lastIncludedIndex, rf.lastIncludedTerm)
 
 	// start ticker goroutine to start elections
 	go rf.electTicker()

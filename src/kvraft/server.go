@@ -66,6 +66,8 @@ type KVServer struct {
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	basicInfo := kv.BasicInfo("Get")
+
 	// Your code here.
 	opType := OpType(GetV)
 	startOp := Op{
@@ -77,8 +79,8 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	index, _, isLeader := kv.rf.Start(startOp)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
-		kv.DPrintf("[S%v KVServer.Get(C%v-%v)] Refuse to %v V of K(%v) for C%v (isn't the leader)\n",
-			kv.me, args.ClientId, args.OpId, opType, Key2Str(args.Key), args.ClientId)
+		kv.DPrintf("[%v(C%v-%v)] Refuse to %v V of K(%v) for C%v (isn't the leader)\n",
+			basicInfo, args.ClientId, args.OpId, opType, Key2Str(args.Key), args.ClientId)
 		return
 	}
 	kv.mu.Lock()
@@ -90,20 +92,20 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	case executedOp := <-ch:
 		if executedOp.ClientId != startOp.ClientId || executedOp.Id != startOp.Id {
 			reply.Err = ErrWrongLeader
-			kv.DPrintf("[S%v KVServer.Get(C%v-%v)] Refuse to %v V of K(%v) for C%v "+
+			kv.DPrintf("[%v(C%v-%v)] Refuse to %v V of K(%v) for C%v "+
 				"(don't match op identifier at I%v: (%v,%v) VS (%v,%v))\n",
-				kv.me, args.ClientId, args.OpId, opType, Key2Str(args.Key), args.ClientId,
+				basicInfo, args.ClientId, args.OpId, opType, Key2Str(args.Key), args.ClientId,
 				index, executedOp.ClientId, executedOp.Id, startOp.ClientId, startOp.Id)
 		} else {
 			reply.Err = OK
 			reply.Value = executedOp.Value
-			kv.DPrintf("[S%v KVServer.Get(C%v-%v)] %v V(%v) of K(%v) for C%v\n",
-				kv.me, args.ClientId, args.OpId, opType, Value2Str(reply.Value), Key2Str(args.Key), args.ClientId)
+			kv.DPrintf("[%v(C%v-%v)] %v V(%v) of K(%v) for C%v\n",
+				basicInfo, args.ClientId, args.OpId, opType, Value2Str(reply.Value), Key2Str(args.Key), args.ClientId)
 		}
 	case <-timer.C:
 		reply.Err = ErrWrongLeader
-		kv.DPrintf("[S%v KVServer.Get(C%v-%v)] Refuse to %v V of K(%v) for C%v (rpc timeout)\n",
-			kv.me, args.ClientId, args.OpId, opType, Key2Str(args.Key), args.ClientId)
+		kv.DPrintf("[%v(C%v-%v)] Refuse to %v V of K(%v) for C%v (rpc timeout)\n",
+			basicInfo, args.ClientId, args.OpId, opType, Key2Str(args.Key), args.ClientId)
 	}
 	timer.Stop()
 
@@ -113,6 +115,8 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	basicInfo := kv.BasicInfo("PutAppend")
+
 	// Your code here.
 	opType := args.Op
 	startOp := Op{
@@ -125,8 +129,8 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	index, _, isLeader := kv.rf.Start(startOp)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
-		kv.DPrintf("[S%v KVServer.PutAppend(C%v-%v)] Refuse to %v V(%v) of K(%v) for C%v (isn't the leader)\n",
-			kv.me, args.ClientId, args.OpId, opType, Value2Str(args.Value), Key2Str(args.Key), args.ClientId)
+		kv.DPrintf("[%v(C%v-%v)] Refuse to %v V(%v) of K(%v) for C%v (isn't the leader)\n",
+			basicInfo, args.ClientId, args.OpId, opType, Value2Str(args.Value), Key2Str(args.Key), args.ClientId)
 		return
 	}
 	kv.mu.Lock()
@@ -138,19 +142,19 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	case executedOp := <-ch:
 		if executedOp.ClientId != startOp.ClientId || executedOp.Id != startOp.Id {
 			reply.Err = ErrWrongLeader
-			kv.DPrintf("[S%v KVServer.PutAppend(C%v-%v)] Refuse to %v V(%v) of K(%v) for C%v "+
+			kv.DPrintf("[%v(C%v-%v)] Refuse to %v V(%v) of K(%v) for C%v "+
 				"(don't match op identifier at I%v: (%v,%v) VS (%v,%v))\n",
-				kv.me, args.ClientId, args.OpId, opType, Value2Str(args.Value), Key2Str(args.Key), args.ClientId,
+				basicInfo, args.ClientId, args.OpId, opType, Value2Str(args.Value), Key2Str(args.Key), args.ClientId,
 				index, executedOp.ClientId, executedOp.Id, startOp.ClientId, startOp.Id)
 		} else {
 			reply.Err = OK
-			kv.DPrintf("[S%v KVServer.PutAppend(C%v-%v)] %v V(%v) of K(%v) for C%v\n",
-				kv.me, args.ClientId, args.OpId, opType, Value2Str(args.Value), Key2Str(args.Key), args.ClientId)
+			kv.DPrintf("[%v(C%v-%v)] %v V(%v) of K(%v) for C%v\n",
+				basicInfo, args.ClientId, args.OpId, opType, Value2Str(args.Value), Key2Str(args.Key), args.ClientId)
 		}
 	case <-timer.C:
 		reply.Err = ErrWrongLeader
-		kv.DPrintf("[S%v KVServer.PutAppend(C%v-%v)] Refuse to %v V(%v) of K(%v) for C%v (rpc timeout)\n",
-			kv.me, args.ClientId, args.OpId, opType, Value2Str(args.Value), Key2Str(args.Key), args.ClientId)
+		kv.DPrintf("[%v(C%v-%v)] Refuse to %v V(%v) of K(%v) for C%v (rpc timeout)\n",
+			basicInfo, args.ClientId, args.OpId, opType, Value2Str(args.Value), Key2Str(args.Key), args.ClientId)
 	}
 	timer.Stop()
 
@@ -170,10 +174,12 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 // to suppress debug output from a Kill()ed instance.
 //
 func (kv *KVServer) Kill() {
+	basicInfo := kv.BasicInfo("Kill")
+
 	atomic.StoreInt32(&kv.dead, 1)
 	kv.rf.Kill()
 	// Your code here, if desired.
-	kv.DPrintf("[S%v] Be killed\n", kv.me)
+	kv.DPrintf("[%v] Be killed\n", basicInfo)
 }
 
 func (kv *KVServer) killed() bool {
@@ -190,13 +196,15 @@ func (kv *KVServer) snapshotData() []byte {
 }
 
 func (kv *KVServer) readSnapshot(data []byte) {
+	basicInfo := kv.BasicInfo("readSnapshot")
+
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
 	var clientId2executedOpId map[Int64Id]int
 	var kvStore KVStore
 	if d.Decode(&clientId2executedOpId) != nil ||
 		d.Decode(&kvStore) != nil {
-		errorMsg := fmt.Sprintf("[S%v KVServer.readSnapshot] Decode error\n", kv.me)
+		errorMsg := fmt.Sprintf("[%v] Decode error\n", basicInfo)
 		panic(errorMsg)
 	} else {
 		kv.clientId2executedOpId = clientId2executedOpId
@@ -205,13 +213,14 @@ func (kv *KVServer) readSnapshot(data []byte) {
 }
 
 func (kv *KVServer) processor() {
+	basicInfo := kv.BasicInfo("processor")
+
 	lastProcessed := 0
 	for kv.killed() == false {
 		m := <-kv.applyCh
 		if m.SnapshotValid {
-			kv.DPrintf("[S%v KVServer.processor] Receive the snapshot to be processed | index: %v | "+
-				"lastProcessed: %v | term: %v\n",
-				kv.me, m.SnapshotIndex, lastProcessed, m.SnapshotTerm)
+			kv.DPrintf("[%v] Receive the snapshot to be processed | index: %v | lastProcessed: %v | term: %v\n",
+				basicInfo, m.SnapshotIndex, lastProcessed, m.SnapshotTerm)
 
 			kv.mu.Lock()
 			if kv.rf.CondInstallSnapshot(m.SnapshotTerm, m.SnapshotIndex, m.Snapshot) {
@@ -221,36 +230,34 @@ func (kv *KVServer) processor() {
 			kv.mu.Unlock()
 		} else if m.CommandValid && m.CommandIndex > lastProcessed {
 			op := m.Command.(Op)
-			kv.DPrintf("[S%v KVServer.processor] Receive the op to be processed \"%v\" | index: %v | "+
-				"lastProcessed: %v\n",
-				kv.me, op, m.CommandIndex, lastProcessed)
+			kv.DPrintf("[%v] Receive the op to be processed \"%v\" | index: %v | lastProcessed: %v\n",
+				basicInfo, op, m.CommandIndex, lastProcessed)
 
 			kv.mu.Lock()
 			oriExecutedOpId, ok := kv.clientId2executedOpId[op.ClientId]
 			if !ok {
-				kv.DPrintf("[S%v KVServer.processor] Haven't executed any ops of C%v\n",
-					kv.me, op.ClientId)
+				kv.DPrintf("[%v] Haven't executed any ops of C%v\n",
+					basicInfo, op.ClientId)
 			} else {
-				kv.DPrintf("[S%v KVServer.processor] The max executed op.Id of C%v is %v\n",
-					kv.me, op.ClientId, oriExecutedOpId)
+				kv.DPrintf("[%v] The max executed op.Id of C%v is %v\n",
+					basicInfo, op.ClientId, oriExecutedOpId)
 			}
 
 			if op.Type == GetV {
 				op.Value = kv.kvStore.Get(op.Key)
 				kv.clientId2executedOpId[op.ClientId] = op.Id
-				kv.DPrintf("[S%v KVServer.processor] Execute the op \"%v\"\n",
-					kv.me, op)
+				kv.DPrintf("[%v] Execute the op \"%v\"\n",
+					basicInfo, op)
 			} else {
 				opBeforeExecuted := kv.OpExecuted(op.ClientId, op.Id)
 				if !opBeforeExecuted {
 					kv.kvStore.PutAppend(op.Key, op.Value, op.Type)
 					kv.clientId2executedOpId[op.ClientId] = op.Id
-					kv.DPrintf("[S%v KVServer.processor] Execute the op \"%v\" | stored value: %v\n",
-						kv.me, op, kv.kvStore.Get(op.Key))
+					kv.DPrintf("[%v] Execute the op \"%v\" | stored value: %v\n",
+						basicInfo, op, kv.kvStore.Get(op.Key))
 				} else {
-					kv.DPrintf("[S%v KVServer.processor] Refuse to execute the duplicated op \"%v\" | "+
-						"stored value: %v\n",
-						kv.me, op, kv.kvStore.Get(op.Key))
+					kv.DPrintf("[%v] Refuse to execute the duplicated op \"%v\" | stored value: %v\n",
+						basicInfo, op, kv.kvStore.Get(op.Key))
 				}
 			}
 			ch := kv.GetProcessedOpCh(m.CommandIndex)
@@ -258,9 +265,8 @@ func (kv *KVServer) processor() {
 
 			raftStateSize := kv.rf.GetPersister().RaftStateSize()
 			if kv.maxraftstate > 0 && raftStateSize > kv.maxraftstate {
-				kv.DPrintf("[S%v KVServer.processor] Prepare snapshot data | index: %v | "+
-					"raftStateSize: %v > maxraftstate: %v > 0\n",
-					kv.me, m.CommandIndex, raftStateSize, kv.maxraftstate)
+				kv.DPrintf("[%v] Prepare snapshot data | index: %v | raftStateSize: %v > maxraftstate: %v > 0\n",
+					basicInfo, m.CommandIndex, raftStateSize, kv.maxraftstate)
 				kv.mu.Lock()
 				snapshotData := kv.snapshotData()
 				kv.mu.Unlock()
@@ -268,8 +274,8 @@ func (kv *KVServer) processor() {
 			}
 
 			ch <- op
-			kv.DPrintf("[S%v KVServer.processor] After return the processed op \"%v\"\n",
-				kv.me, op)
+			kv.DPrintf("[%v] After return the processed op \"%v\"\n",
+				basicInfo, op)
 			lastProcessed = m.CommandIndex
 		}
 	}
@@ -298,8 +304,6 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.me = me
 	kv.maxraftstate = maxraftstate
 
-	// You may need initialization code here.
-
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
@@ -307,8 +311,8 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.clientId2executedOpId = make(map[Int64Id]int)
 	kv.index2processedOpCh = make(map[int]chan Op)
 	kv.kvStore.KVMap = make(map[string]string)
-	kv.DPrintf("[S%v] Start new KV server | maxraftstate: %v\n",
-		kv.me, kv.maxraftstate)
+	kv.DPrintf("[%v] Start new KV server | maxraftstate: %v\n",
+		kv.BasicInfo(""), kv.maxraftstate)
 
 	go kv.processor()
 

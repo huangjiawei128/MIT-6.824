@@ -29,6 +29,8 @@ type RequestVoteReply struct {
 }
 
 func (rf *Raft) sendRequestVotePre(server int) (RequestVoteArgs, RequestVoteReply, bool) {
+	methodName := "sendRequestVotePre"
+
 	if rf.role != Candidate {
 		return RequestVoteArgs{}, RequestVoteReply{}, false
 	}
@@ -44,8 +46,8 @@ func (rf *Raft) sendRequestVotePre(server int) (RequestVoteArgs, RequestVoteRepl
 	rf.nextRpcId++
 	reply := RequestVoteReply{}
 
-	rf.DPrintf("[R%v T%v Raft.sendRequestVotePre(T%v-%v)] Send RequestVote RPC to R%v\n",
-		rf.me, rf.currentTerm, args.Term, args.RpcId, server)
+	rf.DPrintf("[%v(T%v-%v)] Send RequestVote RPC to R%v\n",
+		rf.BasicInfoWithTerm(methodName), args.Term, args.RpcId, server)
 	return args, reply, true
 }
 
@@ -84,12 +86,14 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 }
 
 func (rf *Raft) sendRequestVotePro(server int, args *RequestVoteArgs, reply *RequestVoteReply, ok bool) {
+	methodName := "sendRequestVotePro"
+
 	if ok {
-		rf.DPrintf("[R%v T%v Raft.sendRequestVotePro(T%v-%v)] Receive RequestVote ACK from R%v | voteGranted: %v\n",
-			rf.me, rf.currentTerm, args.Term, args.RpcId, server, reply.VoteGranted)
+		rf.DPrintf("[%v(T%v-%v)] Receive RequestVote ACK from R%v | voteGranted: %v\n",
+			rf.BasicInfoWithTerm(methodName), args.Term, args.RpcId, server, reply.VoteGranted)
 	} else {
-		rf.DPrintf("[R%v T%v Raft.sendRequestVotePro(T%v-%v)] Fail to receive RequestVote ACK from R%v\n",
-			rf.me, rf.currentTerm, args.Term, args.RpcId, server)
+		rf.DPrintf("[%v(T%v-%v)] Fail to receive RequestVote ACK from R%v\n",
+			rf.BasicInfoWithTerm(methodName), args.Term, args.RpcId, server)
 		return
 	}
 
@@ -106,8 +110,8 @@ func (rf *Raft) sendRequestVotePro(server int, args *RequestVoteArgs, reply *Req
 	if reply.VoteGranted {
 		oriVoteNum := rf.voteNum
 		rf.voteNum++
-		rf.DPrintf("[R%v T%v Raft.sendRequestVotePro(T%v-%v)] voteNum: %v -> %v\n",
-			rf.me, rf.currentTerm, args.Term, args.RpcId, oriVoteNum, rf.voteNum)
+		rf.DPrintf("[%v(T%v-%v)] voteNum: %v -> %v\n",
+			rf.BasicInfoWithTerm(methodName), args.Term, args.RpcId, oriVoteNum, rf.voteNum)
 		if rf.voteNum > len(rf.peers)>>1 {
 			rf.BecomeLeader()
 		}
@@ -118,19 +122,22 @@ func (rf *Raft) sendRequestVotePro(server int, args *RequestVoteArgs, reply *Req
 // example RequestVote RPC handler.
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
+	methodName := "RequestVote"
+
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	rf.DPrintf("[R%v T%v Raft.RequestVote(R%v-T%v-%v)] Receive RequestVote RPC from R%v\n",
-		rf.me, rf.currentTerm, args.CandidateId, args.Term, args.RpcId, args.CandidateId)
+	rf.DPrintf("[%v(R%v-T%v-%v)] Receive RequestVote RPC from R%v\n",
+		rf.BasicInfoWithTerm(methodName), args.CandidateId, args.Term, args.RpcId, args.CandidateId)
 
 	reply.VoteGranted = true
 	reply.Term = rf.currentTerm
 
 	if args.Term < rf.currentTerm {
 		reply.VoteGranted = false
-		rf.DPrintf("[R%v T%v Raft.RequestVote(R%v-T%v-%v)] Refuse to vote for R%v (have ahead term: %v > %v)\n",
-			rf.me, rf.currentTerm, args.CandidateId, args.Term, args.RpcId, args.CandidateId, rf.currentTerm, args.Term)
+		rf.DPrintf("[%v(R%v-T%v-%v)] Refuse to vote for R%v (have ahead term: %v > %v)\n",
+			rf.BasicInfoWithTerm(methodName), args.CandidateId, args.Term, args.RpcId, args.CandidateId,
+			rf.currentTerm, args.Term)
 		return
 	}
 
@@ -145,17 +152,17 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	if rf.votedFor != -1 && rf.votedFor != args.CandidateId {
 		reply.VoteGranted = false
-		rf.DPrintf("[R%v T%v Raft.RequestVote(R%v-T%v-%v)] Refuse to vote for R%v (have already voted for R%v)\n",
-			rf.me, rf.currentTerm, args.CandidateId, args.Term, args.RpcId, args.CandidateId, rf.votedFor)
+		rf.DPrintf("[%v(R%v-T%v-%v)] Refuse to vote for R%v (have already voted for R%v)\n",
+			rf.BasicInfoWithTerm(methodName), args.CandidateId, args.Term, args.RpcId, args.CandidateId, rf.votedFor)
 		return
 	}
 
 	if !rf.UpToDate(args.LastLogIndex, args.LastLogTerm) {
 		reply.VoteGranted = false
 		lastLogIndex, lastLogTerm := rf.GetLastLogInfo()
-		rf.DPrintf("[R%v T%v Raft.RequestVote(R%v-T%v-%v)] Refuse to vote for R%v "+
+		rf.DPrintf("[%v(R%v-T%v-%v)] Refuse to vote for R%v "+
 			"(have ahead (lastLogIndex,lastLogTerm): (%v,%v) VS (%v,%v))\n",
-			rf.me, rf.currentTerm, args.CandidateId, args.Term, args.RpcId, args.CandidateId,
+			rf.BasicInfoWithTerm(methodName), args.CandidateId, args.Term, args.RpcId, args.CandidateId,
 			lastLogIndex, lastLogTerm, args.LastLogIndex, args.LastLogTerm)
 		return
 	}
@@ -163,8 +170,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.votedFor = args.CandidateId
 	rf.persist()
 	rf.ResetInitialTime()
-	rf.DPrintf("[R%v T%v Raft.RequestVote(R%v-T%v-%v)] Vote for R%v | commitIndex: %v\n",
-		rf.me, rf.currentTerm, args.CandidateId, args.Term, args.RpcId, args.CandidateId, rf.commitIndex)
+	rf.DPrintf("[%v(R%v-T%v-%v)] Vote for R%v | commitIndex: %v\n",
+		rf.BasicInfoWithTerm(methodName), args.CandidateId, args.Term, args.RpcId, args.CandidateId, rf.commitIndex)
 }
 
 //	==============================
@@ -214,6 +221,8 @@ type AppendEntriesReply struct {
 }
 
 func (rf *Raft) sendAppendEntriesPre(server int) (AppendEntriesArgs, AppendEntriesReply, bool) {
+	methodName := "sendAppendEntriesPre"
+
 	if rf.role != Leader {
 		return AppendEntriesArgs{}, AppendEntriesReply{}, false
 	}
@@ -235,8 +244,8 @@ func (rf *Raft) sendAppendEntriesPre(server int) (AppendEntriesArgs, AppendEntri
 	}
 	reply := AppendEntriesReply{}
 
-	rf.DPrintf("[R%v T%v Raft.sendAppendEntriesPre(T%v-%v)] Send AppendEntries RPC to R%v\n",
-		rf.me, rf.currentTerm, args.Term, args.RpcId, server)
+	rf.DPrintf("[%v(T%v-%v)] Send AppendEntries RPC to R%v\n",
+		rf.BasicInfoWithTerm(methodName), args.Term, args.RpcId, server)
 	return args, reply, true
 }
 
@@ -246,13 +255,14 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 }
 
 func (rf *Raft) sendAppendEntriesPro(server int, args *AppendEntriesArgs, reply *AppendEntriesReply, ok bool) {
+	methodName := "sendAppendEntriesPro"
+
 	if ok {
-		rf.DPrintf("[R%v T%v Raft.sendAppendEntriesPro(T%v-%v)] Receive AppendEntries ACK from R%v "+
-			"| status: %v | nextIndex: %v\n",
-			rf.me, rf.currentTerm, args.Term, args.RpcId, server, reply.Status, reply.NextIndex)
+		rf.DPrintf("[%v(T%v-%v)] Receive AppendEntries ACK from R%v | status: %v | nextIndex: %v\n",
+			rf.BasicInfoWithTerm(methodName), args.Term, args.RpcId, server, reply.Status, reply.NextIndex)
 	} else {
-		rf.DPrintf("[R%v T%v Raft.sendAppendEntriesPro(T%v-%v)] Fail to receive AppendEntries ACK from R%v\n",
-			rf.me, rf.currentTerm, args.Term, args.RpcId, server)
+		rf.DPrintf("[%v(T%v-%v)] Fail to receive AppendEntries ACK from R%v\n",
+			rf.BasicInfoWithTerm(methodName), args.Term, args.RpcId, server)
 		return
 	}
 
@@ -272,8 +282,8 @@ func (rf *Raft) sendAppendEntriesPro(server int, args *AppendEntriesArgs, reply 
 			return
 		}
 		rf.nextIndex[server] = reply.NextIndex
-		rf.DPrintf("[R%v T%v Raft.sendAppendEntriesPro(T%v-%v)] matchIndex[%v]: %v | nextIndex[%v]: %v -> %v\n",
-			rf.me, rf.currentTerm, args.Term, args.RpcId, server, rf.matchIndex[server],
+		rf.DPrintf("[%v(T%v-%v)] matchIndex[%v]: %v | nextIndex[%v]: %v -> %v\n",
+			rf.BasicInfoWithTerm(methodName), args.Term, args.RpcId, server, rf.matchIndex[server],
 			server, oriNextIndex, rf.nextIndex[server])
 		return
 	}
@@ -287,32 +297,35 @@ func (rf *Raft) sendAppendEntriesPro(server int, args *AppendEntriesArgs, reply 
 		}
 		rf.matchIndex[server] = newMatchIndex
 		rf.nextIndex[server] = reply.NextIndex
-		rf.DPrintf("[R%v T%v Raft.sendAppendEntriesPro(T%v-%v)] matchIndex[%v]: %v -> %v | nextIndex[%v]: %v -> %v\n",
-			rf.me, rf.currentTerm, args.Term, args.RpcId, server, oriMatchIndex, rf.matchIndex[server],
+		rf.DPrintf("[%v(T%v-%v)] matchIndex[%v]: %v -> %v | nextIndex[%v]: %v -> %v\n",
+			rf.BasicInfoWithTerm(methodName), args.Term, args.RpcId, server, oriMatchIndex, rf.matchIndex[server],
 			server, oriNextIndex, rf.nextIndex[server])
 
 		newCommitIndex := rf.GetMajorityMatchIndex()
 		term := rf.GetTerm(newCommitIndex)
 		if term > rf.currentTerm {
-			errorMsg := fmt.Sprintf("[R%v T%v Raft.sendAppendEntriesPro(T%v-%v)] log[%v].Term > currentTerm\n",
-				rf.me, rf.currentTerm, args.Term, args.RpcId, newCommitIndex)
+			errorMsg := fmt.Sprintf("[%v(T%v-%v)] log[%v].Term > currentTerm\n",
+				rf.BasicInfoWithTerm(methodName), args.Term, args.RpcId, newCommitIndex)
 			panic(errorMsg)
 		}
 		if newCommitIndex > rf.commitIndex && term == rf.currentTerm {
 			oriCommitIndex := rf.commitIndex
 			rf.commitIndex = newCommitIndex
-			rf.DPrintf("[R%v T%v Raft.sendAppendEntriesPro(T%v-%v)] commitIndex: %v -> %v\n",
-				rf.me, rf.currentTerm, args.Term, args.RpcId, oriCommitIndex, rf.commitIndex)
+			rf.DPrintf("[%v(T%v-%v)] commitIndex: %v -> %v\n",
+				rf.BasicInfoWithTerm(methodName), args.Term, args.RpcId, oriCommitIndex, rf.commitIndex)
 		}
 	}
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	methodName := "AppendEntries"
+
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	rf.DPrintf("[R%v T%v Raft.AppendEntries(R%v-T%v-%v)] Receive AppendEntries RPC from R%v\n",
-		rf.me, rf.currentTerm, args.LeaderId, args.Term, args.RpcId, args.LeaderId)
+
+	rf.DPrintf("[%v(R%v-T%v-%v)] Receive AppendEntries RPC from R%v\n",
+		rf.BasicInfoWithTerm(methodName), args.LeaderId, args.Term, args.RpcId, args.LeaderId)
 
 	appendIndex := args.PrevLogIndex + 1
 	reply.Status = Success
@@ -321,9 +334,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	if args.Term < rf.currentTerm {
 		reply.Status = TermLag
-		rf.DPrintf("[R%v T%v Raft.AppendEntries(R%v-T%v-%v)] Refuse to append entries from R%v "+
-			"(have ahead term: %v > %v)\n",
-			rf.me, rf.currentTerm, args.LeaderId, args.Term, args.RpcId, args.LeaderId, rf.currentTerm, args.Term)
+		rf.DPrintf("[%v(R%v-T%v-%v)] Refuse to append entries from R%v (have ahead term: %v > %v)\n",
+			rf.BasicInfoWithTerm(methodName), args.LeaderId, args.Term, args.RpcId, args.LeaderId, rf.currentTerm, args.Term)
 		return
 	}
 
@@ -334,18 +346,16 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if appendIndex <= rf.lastIncludedIndex {
 		reply.Status = EntrySnapshot
 		reply.NextIndex = rf.lastIncludedIndex + 1
-		rf.DPrintf("[R%v T%v Raft.AppendEntries(R%v-T%v-%v)] Refuse to append entries from R%v "+
-			"(lastIncludedIndex: %v >= appendIndex: %v)\n",
-			rf.me, rf.currentTerm, args.LeaderId, args.Term, args.RpcId, args.LeaderId,
+		rf.DPrintf("[%v(R%v-T%v-%v)] Refuse to append entries from R%v (lastIncludedIndex: %v >= appendIndex: %v)\n",
+			rf.BasicInfoWithTerm(methodName), args.LeaderId, args.Term, args.RpcId, args.LeaderId,
 			rf.lastIncludedIndex, appendIndex)
 		return
 	}
 
 	if !rf.MatchTerm(args.PrevLogIndex, args.PrevLogTerm) {
 		reply.Status = EntryMissmatch
-		rf.DPrintf("[R%v T%v Raft.AppendEntries(R%v-T%v-%v)] Refuse to append entries from R%v "+
-			"(don't match term at I%v: %v VS %v)\n",
-			rf.me, rf.currentTerm, args.LeaderId, args.Term, args.RpcId, args.LeaderId,
+		rf.DPrintf("[%v(R%v-T%v-%v)] Refuse to append entries from R%v (don't match term at I%v: %v VS %v)\n",
+			rf.BasicInfoWithTerm(methodName), args.LeaderId, args.Term, args.RpcId, args.LeaderId,
 			args.PrevLogIndex, rf.GetTerm(args.PrevLogIndex), args.PrevLogTerm)
 
 		//	optimize reply.NextIndex
@@ -371,26 +381,25 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		len(args.Entries) > 0 && args.Entries[len(args.Entries)-1].Term > rf.GetTerm(reply.NextIndex) {
 		rf.log = append(rf.GetLeftSubLog(appendIndex), args.Entries...)
 	} else {
-		//	rf.log = append(append(rf.GetLeftSubLog(appendIndex), args.Entries...), rf.GetRightSubLog(reply.NextIndex)...)
 		rf.log = append(rf.GetLeftSubLog(appendIndex), args.Entries...)
 		rf.log = rf.GetLeftSubLog(oriLastLogIndex + 1)
 	}
 	rf.persist()
-	rf.DPrintf("[R%v T%v Raft.AppendEntries(R%v-T%v-%v)] lastLogIndex: %v -> %v | appendIndex: %v | nextIndex: %v\n",
-		rf.me, rf.currentTerm, args.LeaderId, args.Term, args.RpcId, oriLastLogIndex, rf.GetLastLogIndex(),
+	rf.DPrintf("[%v(R%v-T%v-%v)] lastLogIndex: %v -> %v | appendIndex: %v | nextIndex: %v\n",
+		rf.BasicInfoWithTerm(methodName), args.LeaderId, args.Term, args.RpcId, oriLastLogIndex, rf.GetLastLogIndex(),
 		appendIndex, reply.NextIndex)
 
 	lastLogIndex := rf.GetLastLogIndex()
 	if args.LeaderCommit > rf.commitIndex {
 		oriCommitIndex := rf.commitIndex
 		rf.commitIndex = Min(args.LeaderCommit, lastLogIndex)
-		rf.DPrintf("[R%v T%v Raft.AppendEntries(R%v-T%v-%v)] commitIndex: %v -> %v\n",
-			rf.me, rf.currentTerm, args.LeaderId, args.Term, args.RpcId, oriCommitIndex, rf.commitIndex)
+		rf.DPrintf("[%v(R%v-T%v-%v)] commitIndex: %v -> %v\n",
+			rf.BasicInfoWithTerm(methodName), args.LeaderId, args.Term, args.RpcId, oriCommitIndex, rf.commitIndex)
 	}
 
 	if rf.commitIndex > lastLogIndex {
-		errorMsg := fmt.Sprintf("[R%v T%v Raft.AppendEntries(R%v-T%v-%v)] commitIndex > lastLogIndex: %v VS %v\n",
-			rf.me, rf.currentTerm, args.LeaderId, args.Term, args.RpcId, rf.commitIndex, lastLogIndex)
+		errorMsg := fmt.Sprintf("[%v(R%v-T%v-%v)] commitIndex > lastLogIndex: %v VS %v\n",
+			rf.BasicInfoWithTerm(methodName), args.LeaderId, args.Term, args.RpcId, rf.commitIndex, lastLogIndex)
 		panic(errorMsg)
 	}
 }
@@ -413,6 +422,8 @@ type InstallSnapshotReply struct {
 }
 
 func (rf *Raft) sendInstallSnapshotPre(server int) (InstallSnapshotArgs, InstallSnapshotReply, bool) {
+	methodName := "sendInstallSnapshotPre"
+
 	if rf.role != Leader {
 		return InstallSnapshotArgs{}, InstallSnapshotReply{}, false
 	}
@@ -427,8 +438,8 @@ func (rf *Raft) sendInstallSnapshotPre(server int) (InstallSnapshotArgs, Install
 	}
 	rf.nextRpcId++
 	reply := InstallSnapshotReply{}
-	rf.DPrintf("[R%v T%v Raft.sendInstallSnapshotPre(T%v-%v)] Send InstallSnapshot RPC to R%v\n",
-		rf.me, rf.currentTerm, args.Term, args.RpcId, server)
+	rf.DPrintf("[%v(T%v-%v)] Send InstallSnapshot RPC to R%v\n",
+		rf.BasicInfoWithTerm(methodName), args.Term, args.RpcId, server)
 	return args, reply, true
 }
 
@@ -438,12 +449,14 @@ func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply
 }
 
 func (rf *Raft) sendInstallSnapshotPro(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply, ok bool) {
+	methodName := "sendInstallSnapshotPro"
+
 	if ok {
-		rf.DPrintf("[R%v T%v Raft.sendInstallSnapshotPro(T%v-%v)] Receive InstallSnapshot ACK from R%v\n",
-			rf.me, rf.currentTerm, args.Term, args.RpcId, server)
+		rf.DPrintf("[%v(T%v-%v)] Receive InstallSnapshot ACK from R%v\n",
+			rf.BasicInfoWithTerm(methodName), args.Term, args.RpcId, server)
 	} else {
-		rf.DPrintf("[R%v T%v Raft.sendInstallSnapshotPro(T%v-%v)] Fail to receive InstallSnapshot ACK from R%v\n",
-			rf.me, rf.currentTerm, args.Term, args.RpcId, server)
+		rf.DPrintf("[%v(T%v-%v)] Fail to receive InstallSnapshot ACK from R%v\n",
+			rf.BasicInfoWithTerm(methodName), args.Term, args.RpcId, server)
 		return
 	}
 
@@ -461,23 +474,24 @@ func (rf *Raft) sendInstallSnapshotPro(server int, args *InstallSnapshotArgs, re
 	oriNextIndex := rf.nextIndex[server]
 	rf.nextIndex[server] = reply.LastIncludedIndex + 1
 	rf.matchIndex[server] = reply.LastIncludedIndex
-	rf.DPrintf("[R%v T%v Raft.sendInstallSnapshotPro(T%v-%v)] matchIndex[%v]: %v -> %v | nextIndex[%v]: %v -> %v\n",
-		rf.me, rf.currentTerm, args.Term, args.RpcId, server, oriMatchIndex, rf.matchIndex[server],
+	rf.DPrintf("[%v(T%v-%v)] matchIndex[%v]: %v -> %v | nextIndex[%v]: %v -> %v\n",
+		rf.BasicInfoWithTerm(methodName), args.Term, args.RpcId, server, oriMatchIndex, rf.matchIndex[server],
 		server, oriNextIndex, rf.nextIndex[server])
 }
 
 func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
+	methodName := "InstallSnapshot"
+
 	rf.mu.Lock()
-	rf.DPrintf("[R%v T%v Raft.InstallSnapshot(R%v-T%v-%v)] Receive InstallSnapshot RPC from R%v\n",
-		rf.me, rf.currentTerm, args.LeaderId, args.Term, args.RpcId, args.LeaderId)
+	rf.DPrintf("[%v(R%v-T%v-%v)] Receive InstallSnapshot RPC from R%v\n",
+		rf.BasicInfoWithTerm(methodName), args.LeaderId, args.Term, args.RpcId, args.LeaderId)
 
 	reply.Term = rf.currentTerm
 	reply.LastIncludedIndex = rf.lastIncludedIndex
 
 	if args.Term < rf.currentTerm {
-		rf.DPrintf("[R%v T%v Raft.InstallSnapshot(R%v-T%v-%v)] Refuse to install snapshot from R%v "+
-			"(have ahead term: %v > %v)\n",
-			rf.me, rf.currentTerm, args.LeaderId, args.Term, args.RpcId, args.LeaderId, rf.currentTerm, args.Term)
+		rf.DPrintf("[%v(R%v-T%v-%v)] Refuse to install snapshot from R%v (have ahead term: %v > %v)\n",
+			rf.BasicInfoWithTerm(methodName), args.LeaderId, args.Term, args.RpcId, args.LeaderId, rf.currentTerm, args.Term)
 		rf.mu.Unlock()
 		return
 	}
@@ -487,9 +501,8 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	reply.Term = rf.currentTerm
 
 	if args.LastIncludedIndex <= rf.lastIncludedIndex {
-		rf.DPrintf("[R%v T%v Raft.InstallSnapshot(R%v-T%v-%v)] Refuse to install snapshot from R%v "+
-			"(have ahead lastIncludedIndex: %v > %v)\n",
-			rf.me, rf.currentTerm, args.LeaderId, args.Term, args.RpcId, args.LeaderId,
+		rf.DPrintf("[%v(R%v-T%v-%v)] Refuse to install snapshot from R%v (have ahead lastIncludedIndex: %v > %v)\n",
+			rf.BasicInfoWithTerm(methodName), args.LeaderId, args.Term, args.RpcId, args.LeaderId,
 			rf.lastIncludedIndex, args.LastIncludedIndex)
 		rf.mu.Unlock()
 		return
@@ -519,9 +532,9 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		SnapshotTerm:  rf.lastIncludedTerm,
 		SnapshotIndex: rf.lastIncludedIndex,
 	}
-	rf.ApplyDPrintf("[R%v T%v Raft.InstallSnapshot] Prepare to apply the snapshot | index: %v | term: %v | "+
+	rf.ApplyDPrintf("[%v] Prepare to apply the snapshot | index: %v | term: %v | "+
 		"lastApplied: %v -> %v | commitIndex: %v -> %v\n",
-		rf.me, rf.currentTerm, applyMsg.SnapshotIndex, applyMsg.SnapshotTerm, oriLastApplied, rf.lastApplied,
+		rf.BasicInfoWithTerm(methodName), applyMsg.SnapshotIndex, applyMsg.SnapshotTerm, oriLastApplied, rf.lastApplied,
 		oriCommitIndex, rf.commitIndex)
 	applyOrder := rf.nextApplyOrder
 	rf.nextApplyOrder++
@@ -531,8 +544,8 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	rf.mu.Unlock()
 
 	rf.applyCh <- applyMsg
-	rf.ApplyDPrintf("[R%v Raft.InstallSnapshot] Apply the snapshot | applyOrder: %v | index: %v | term: %v \n",
-		rf.me, applyOrder, applyMsg.SnapshotIndex, applyMsg.SnapshotTerm)
+	rf.ApplyDPrintf("[%v] Apply the snapshot | applyOrder: %v | index: %v | term: %v \n",
+		rf.BasicInfo(methodName), applyOrder, applyMsg.SnapshotIndex, applyMsg.SnapshotTerm)
 
 	rf.mu.Lock()
 	rf.finishedApplyOrder = applyOrder
