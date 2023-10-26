@@ -28,11 +28,11 @@ type RequestVoteReply struct {
 	VoteGranted bool
 }
 
-func (rf *Raft) sendRequestVotePre(server int) (RequestVoteArgs, RequestVoteReply, bool) {
+func (rf *Raft) sendRequestVotePre(server int) (*RequestVoteArgs, *RequestVoteReply, bool) {
 	methodName := "sendRequestVotePre"
 
 	if rf.role != Candidate {
-		return RequestVoteArgs{}, RequestVoteReply{}, false
+		return &RequestVoteArgs{}, &RequestVoteReply{}, false
 	}
 
 	lastLogIndex, lastLogTerm := rf.GetLastLogInfo()
@@ -48,7 +48,7 @@ func (rf *Raft) sendRequestVotePre(server int) (RequestVoteArgs, RequestVoteRepl
 
 	rf.DPrintf("[%v(T%v-%v)] Send RequestVote RPC to R%v\n",
 		rf.BasicInfoWithTerm(methodName), args.Term, args.RpcId, server)
-	return args, reply, true
+	return &args, &reply, true
 }
 
 //
@@ -103,7 +103,6 @@ func (rf *Raft) sendRequestVotePro(server int, args *RequestVoteArgs, reply *Req
 
 	if reply.Term > rf.currentTerm {
 		rf.BecomeFollower(reply.Term)
-		rf.ResetInitialTime()
 		return
 	}
 
@@ -130,8 +129,11 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.DPrintf("[%v(R%v-T%v-%v)] Receive RequestVote RPC from R%v\n",
 		rf.BasicInfoWithTerm(methodName), args.CandidateId, args.Term, args.RpcId, args.CandidateId)
 
-	reply.VoteGranted = true
+	if args.Term > rf.currentTerm {
+		rf.BecomeFollower(args.Term)
+	}
 	reply.Term = rf.currentTerm
+	reply.VoteGranted = true
 
 	if args.Term < rf.currentTerm {
 		reply.VoteGranted = false
@@ -139,15 +141,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 			rf.BasicInfoWithTerm(methodName), args.CandidateId, args.Term, args.RpcId, args.CandidateId,
 			rf.currentTerm, args.Term)
 		return
-	}
-
-	if args.Term > rf.currentTerm {
-		oriRole := rf.role
-		rf.BecomeFollower(args.Term)
-		if oriRole != Follower {
-			//	rf.ResetInitialTime()
-		}
-		reply.Term = rf.currentTerm
 	}
 
 	if rf.votedFor != -1 && rf.votedFor != args.CandidateId {
@@ -182,9 +175,8 @@ type AppendStatus int
 const (
 	Success AppendStatus = iota
 	TermLag
-	LogLag
 	EntrySnapshot
-	EntryMissmatch
+	EntryMismatch
 )
 
 func (appendStatus AppendStatus) String() string {
@@ -194,12 +186,10 @@ func (appendStatus AppendStatus) String() string {
 		ret = "Success"
 	case TermLag:
 		ret = "TermLag"
-	case LogLag:
-		ret = "LogLag"
 	case EntrySnapshot:
 		ret = "EntrySnapshot"
-	case EntryMissmatch:
-		ret = "EntryMissmatch"
+	case EntryMismatch:
+		ret = "EntryMismatch"
 	}
 	return ret
 }
@@ -220,11 +210,11 @@ type AppendEntriesReply struct {
 	NextIndex int
 }
 
-func (rf *Raft) sendAppendEntriesPre(server int) (AppendEntriesArgs, AppendEntriesReply, bool) {
+func (rf *Raft) sendAppendEntriesPre(server int) (*AppendEntriesArgs, *AppendEntriesReply, bool) {
 	methodName := "sendAppendEntriesPre"
 
 	if rf.role != Leader {
-		return AppendEntriesArgs{}, AppendEntriesReply{}, false
+		return &AppendEntriesArgs{}, &AppendEntriesReply{}, false
 	}
 
 	lastLogIndex := rf.GetLastLogIndex()
@@ -239,14 +229,14 @@ func (rf *Raft) sendAppendEntriesPre(server int) (AppendEntriesArgs, AppendEntri
 		Entries:      []LogEntry{},
 	}
 	rf.nextRpcId++
-	if lastLogIndex >= rf.nextIndex[server] {
+	if lastLogIndex >= nextIndex {
 		args.Entries = rf.GetSubLog(nextIndex, lastLogIndex+1)
 	}
 	reply := AppendEntriesReply{}
 
 	rf.DPrintf("[%v(T%v-%v)] Send AppendEntries RPC to R%v\n",
 		rf.BasicInfoWithTerm(methodName), args.Term, args.RpcId, server)
-	return args, reply, true
+	return &args, &reply, true
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
@@ -270,13 +260,12 @@ func (rf *Raft) sendAppendEntriesPro(server int, args *AppendEntriesArgs, reply 
 		return
 	}
 
-	if reply.Term > rf.currentTerm {
+	if reply.Status == TermLag {
 		rf.BecomeFollower(reply.Term)
-		//	rf.ResetInitialTime()
 		return
 	}
 
-	if reply.Status == EntrySnapshot || reply.Status == EntryMissmatch {
+	if reply.Status == EntrySnapshot || reply.Status == EntryMismatch {
 		oriNextIndex := rf.nextIndex[server]
 		if reply.NextIndex <= rf.matchIndex[server] {
 			return
@@ -323,13 +312,16 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-
 	rf.DPrintf("[%v(R%v-T%v-%v)] Receive AppendEntries RPC from R%v\n",
 		rf.BasicInfoWithTerm(methodName), args.LeaderId, args.Term, args.RpcId, args.LeaderId)
 
+	if args.Term >= rf.currentTerm {
+		rf.BecomeFollower(args.Term)
+		rf.ResetInitialTime()
+	}
 	appendIndex := args.PrevLogIndex + 1
-	reply.Status = Success
 	reply.Term = rf.currentTerm
+	reply.Status = Success
 	reply.NextIndex = appendIndex
 
 	if args.Term < rf.currentTerm {
@@ -338,10 +330,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			rf.BasicInfoWithTerm(methodName), args.LeaderId, args.Term, args.RpcId, args.LeaderId, rf.currentTerm, args.Term)
 		return
 	}
-
-	rf.BecomeFollower(args.Term)
-	rf.ResetInitialTime()
-	reply.Term = rf.currentTerm
 
 	if appendIndex <= rf.lastIncludedIndex {
 		reply.Status = EntrySnapshot
@@ -353,7 +341,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	if !rf.MatchTerm(args.PrevLogIndex, args.PrevLogTerm) {
-		reply.Status = EntryMissmatch
+		reply.Status = EntryMismatch
 		rf.DPrintf("[%v(R%v-T%v-%v)] Refuse to append entries from R%v (don't match term at I%v: %v VS %v)\n",
 			rf.BasicInfoWithTerm(methodName), args.LeaderId, args.Term, args.RpcId, args.LeaderId,
 			args.PrevLogIndex, rf.GetTerm(args.PrevLogIndex), args.PrevLogTerm)
@@ -421,11 +409,11 @@ type InstallSnapshotReply struct {
 	LastIncludedIndex int
 }
 
-func (rf *Raft) sendInstallSnapshotPre(server int) (InstallSnapshotArgs, InstallSnapshotReply, bool) {
+func (rf *Raft) sendInstallSnapshotPre(server int) (*InstallSnapshotArgs, *InstallSnapshotReply, bool) {
 	methodName := "sendInstallSnapshotPre"
 
 	if rf.role != Leader {
-		return InstallSnapshotArgs{}, InstallSnapshotReply{}, false
+		return &InstallSnapshotArgs{}, &InstallSnapshotReply{}, false
 	}
 
 	args := InstallSnapshotArgs{
@@ -440,7 +428,7 @@ func (rf *Raft) sendInstallSnapshotPre(server int) (InstallSnapshotArgs, Install
 	reply := InstallSnapshotReply{}
 	rf.DPrintf("[%v(T%v-%v)] Send InstallSnapshot RPC to R%v\n",
 		rf.BasicInfoWithTerm(methodName), args.Term, args.RpcId, server)
-	return args, reply, true
+	return &args, &reply, true
 }
 
 func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) bool {
@@ -466,7 +454,6 @@ func (rf *Raft) sendInstallSnapshotPro(server int, args *InstallSnapshotArgs, re
 
 	if reply.Term > rf.currentTerm {
 		rf.BecomeFollower(reply.Term)
-		//	rf.ResetInitialTime()
 		return
 	}
 
@@ -486,6 +473,10 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	rf.DPrintf("[%v(R%v-T%v-%v)] Receive InstallSnapshot RPC from R%v\n",
 		rf.BasicInfoWithTerm(methodName), args.LeaderId, args.Term, args.RpcId, args.LeaderId)
 
+	if args.Term >= rf.currentTerm {
+		rf.BecomeFollower(args.Term)
+		rf.ResetInitialTime()
+	}
 	reply.Term = rf.currentTerm
 	reply.LastIncludedIndex = rf.lastIncludedIndex
 
@@ -495,10 +486,6 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		rf.mu.Unlock()
 		return
 	}
-
-	rf.BecomeFollower(args.Term)
-	rf.ResetInitialTime()
-	reply.Term = rf.currentTerm
 
 	if args.LastIncludedIndex <= rf.lastIncludedIndex {
 		rf.DPrintf("[%v(R%v-T%v-%v)] Refuse to install snapshot from R%v (have ahead lastIncludedIndex: %v > %v)\n",
@@ -538,7 +525,11 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		oriCommitIndex, rf.commitIndex)
 	applyOrder := rf.nextApplyOrder
 	rf.nextApplyOrder++
-	for applyOrder != rf.finishedApplyOrder+1 && !rf.killed() {
+	for applyOrder != rf.finishedApplyOrder+1 {
+		if rf.killed() {
+			rf.mu.Unlock()
+			return
+		}
 		rf.applyCond.Wait()
 	}
 	rf.mu.Unlock()

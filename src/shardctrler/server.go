@@ -78,298 +78,193 @@ func (op Op) String() string {
 }
 
 func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
-	basicInfo := sc.BasicInfo("Join")
-
 	// Your code here.
 	opType := OpType(JoinRG)
-	startOp := Op{
+	op := Op{
 		Id:       args.OpId,
 		ClientId: args.ClientId,
 		Type:     opType,
 		Servers:  args.Servers,
 	}
-	index, _, isLeader := sc.rf.Start(startOp)
-	if !isLeader {
-		reply.Err = ErrWrongLeader
-		sc.DPrintf("[%v(C%v-%v)] Refuse to %v RG(servers: %v) for C%v (isn't the leader)\n",
-			basicInfo, args.ClientId, args.OpId, opType, args.Servers, args.ClientId)
+
+	prepareErr, index := sc.prepareForProcess(op)
+	if prepareErr != OK {
+		reply.Err = prepareErr
 		return
 	}
-	sc.mu.Lock()
-	ch := sc.GetProcessedOpCh(index)
-	sc.mu.Unlock()
 
-	timer := time.NewTimer(RpcTimeout * time.Millisecond)
-	select {
-	case executedOp := <-ch:
-		if executedOp.ClientId != startOp.ClientId || executedOp.Id != startOp.Id {
-			reply.Err = ErrWrongLeader
-			sc.DPrintf("[%v(C%v-%v)] Refuse to %v RG(servers: %v) for C%v "+
-				"(don't match op identifier at I%v: (%v,%v) VS (%v,%v))\n",
-				basicInfo, args.ClientId, args.OpId, opType, args.Servers, args.ClientId,
-				index, executedOp.ClientId, executedOp.Id, startOp.ClientId, startOp.Id)
-		} else {
-			reply.Err = OK
-			sc.DPrintf("[%v(C%v-%v)] %v RG(servers: %v) for C%v\n",
-				basicInfo, args.ClientId, args.OpId, opType, args.Servers, args.ClientId)
-		}
-	case <-timer.C:
-		reply.Err = ErrWrongLeader
-		sc.DPrintf("[%v(C%v-%v)] Refuse to %v RG(servers: %v) for C%v (rpc timeout)\n",
-			basicInfo, args.ClientId, args.OpId, opType, args.Servers, args.ClientId)
-	}
-	timer.Stop()
-
-	sc.mu.Lock()
-	sc.DeleteProcessedOpCh(index)
-	sc.mu.Unlock()
+	waitErr, _ := sc.waitForProcess(op, index)
+	reply.Err = waitErr
 }
 
 func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
-	basicInfo := sc.BasicInfo("Leave")
-
 	// Your code here.
 	opType := OpType(LeaveRG)
-	startOp := Op{
+	op := Op{
 		Id:       args.OpId,
 		ClientId: args.ClientId,
 		Type:     opType,
 		GIDs:     args.GIDs,
 	}
-	index, _, isLeader := sc.rf.Start(startOp)
-	if !isLeader {
-		reply.Err = ErrWrongLeader
-		sc.DPrintf("[%v(C%v-%v)] Refuse to %v RG(gids: %v) for C%v (isn't the leader)\n",
-			basicInfo, args.ClientId, args.OpId, opType, args.GIDs, args.ClientId)
+
+	prepareErr, index := sc.prepareForProcess(op)
+	if prepareErr != OK {
+		reply.Err = prepareErr
 		return
 	}
-	sc.mu.Lock()
-	ch := sc.GetProcessedOpCh(index)
-	sc.mu.Unlock()
 
-	timer := time.NewTimer(RpcTimeout * time.Millisecond)
-	select {
-	case executedOp := <-ch:
-		if executedOp.ClientId != startOp.ClientId || executedOp.Id != startOp.Id {
-			reply.Err = ErrWrongLeader
-			sc.DPrintf("[%v(C%v-%v)] Refuse to %v RG(gids: %v) for C%v "+
-				"(don't match op identifier at I%v: (%v,%v) VS (%v,%v))\n",
-				basicInfo, args.ClientId, args.OpId, opType, args.GIDs, args.ClientId,
-				index, executedOp.ClientId, executedOp.Id, startOp.ClientId, startOp.Id)
-		} else {
-			reply.Err = OK
-			sc.DPrintf("[%v(C%v-%v)] %v RG(gids: %v) for C%v\n",
-				basicInfo, args.ClientId, args.OpId, opType, args.GIDs, args.ClientId)
-		}
-	case <-timer.C:
-		reply.Err = ErrWrongLeader
-		sc.DPrintf("[%v(C%v-%v)] Refuse to %v RG(gids: %v) for C%v (rpc timeout)\n",
-			basicInfo, args.ClientId, args.OpId, opType, args.GIDs, args.ClientId)
-	}
-	timer.Stop()
-
-	sc.mu.Lock()
-	sc.DeleteProcessedOpCh(index)
-	sc.mu.Unlock()
+	waitErr, _ := sc.waitForProcess(op, index)
+	reply.Err = waitErr
 }
 
 func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
-	basicInfo := sc.BasicInfo("Move")
-
 	// Your code here.
 	opType := OpType(MoveSD)
-	startOp := Op{
+	op := Op{
 		Id:       args.OpId,
 		ClientId: args.ClientId,
 		Type:     opType,
 		Shard:    args.Shard,
 		GIDs:     make([]int, 1),
 	}
-	startOp.GIDs[0] = args.GID
-	index, _, isLeader := sc.rf.Start(startOp)
-	if !isLeader {
-		reply.Err = ErrWrongLeader
-		sc.DPrintf("[%v(C%v-%v)] Refuse to %v SD%v to RG%v for C%v (isn't the leader)\n",
-			basicInfo, args.ClientId, args.OpId, opType, args.Shard, args.GID, args.ClientId)
+	op.GIDs[0] = args.GID
+
+	prepareErr, index := sc.prepareForProcess(op)
+	if prepareErr != OK {
+		reply.Err = prepareErr
 		return
 	}
-	sc.mu.Lock()
-	ch := sc.GetProcessedOpCh(index)
-	sc.mu.Unlock()
 
-	timer := time.NewTimer(RpcTimeout * time.Millisecond)
-	select {
-	case executedOp := <-ch:
-		if executedOp.ClientId != startOp.ClientId || executedOp.Id != startOp.Id {
-			reply.Err = ErrWrongLeader
-			sc.DPrintf("[%v(C%v-%v)] Refuse to %v SD%v to RG%v for C%v "+
-				"(don't match op identifier at I%v: (%v,%v) VS (%v,%v))\n",
-				basicInfo, args.ClientId, args.OpId, opType, args.Shard, args.GID, args.ClientId,
-				index, executedOp.ClientId, executedOp.Id, startOp.ClientId, startOp.Id)
-		} else {
-			reply.Err = OK
-			sc.DPrintf("[%v(C%v-%v)] %v SD%v to RG%v for C%v\n",
-				basicInfo, args.ClientId, args.OpId, opType, args.Shard, args.GID, args.ClientId)
-		}
-	case <-timer.C:
-		reply.Err = ErrWrongLeader
-		sc.DPrintf("[%v(C%v-%v)] Refuse to %v SD%v to RG%v for C%v (rpc timeout)\n",
-			basicInfo, args.ClientId, args.OpId, opType, args.Shard, args.GID, args.ClientId)
-	}
-	timer.Stop()
-
-	sc.mu.Lock()
-	sc.DeleteProcessedOpCh(index)
-	sc.mu.Unlock()
+	waitErr, _ := sc.waitForProcess(op, index)
+	reply.Err = waitErr
 }
 
 func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
-	basicInfo := sc.BasicInfo("Query")
-
 	// Your code here.
 	opType := OpType(QueryCF)
-	startOp := Op{
+	op := Op{
 		Id:        args.OpId,
 		ClientId:  args.ClientId,
 		Type:      opType,
 		ConfigNum: args.Num,
 	}
-	index, _, isLeader := sc.rf.Start(startOp)
-	if !isLeader {
-		reply.Err = ErrWrongLeader
-		sc.DPrintf("[%v(C%v-%v)] Refuse to %v CF%v for C%v (isn't the leader)\n",
-			basicInfo, args.ClientId, args.OpId, opType, args.Num, args.ClientId)
+
+	prepareErr, index := sc.prepareForProcess(op)
+	if prepareErr != OK {
+		reply.Err = prepareErr
 		return
 	}
+
+	waitErr, configRet := sc.waitForProcess(op, index)
+	reply.Err, reply.Config = waitErr, *configRet
+}
+
+func (sc *ShardCtrler) prepareForProcess(op Op) (Err, int) {
+	basicInfo := sc.BasicInfo("prepareForProcess")
+
+	index, _, isLeader := sc.rf.Start(op)
+	var err Err = OK
+	if !isLeader {
+		err = ErrWrongLeader
+		switch op.Type {
+		case JoinRG:
+			sc.DPrintf("[%v(C%v-%v)] Refuse to %v RG(servers: %v) for C%v (isn't the leader)\n",
+				basicInfo, op.ClientId, op.Id, op.Type, op.Servers, op.ClientId)
+		case LeaveRG:
+			sc.DPrintf("[%v(C%v-%v)] Refuse to %v RG(gids: %v) for C%v (isn't the leader)\n",
+				basicInfo, op.ClientId, op.Id, op.Type, op.GIDs, op.ClientId)
+		case MoveSD:
+			sc.DPrintf("[%v(C%v-%v)] Refuse to %v SD%v to RG%v for C%v (isn't the leader)\n",
+				basicInfo, op.ClientId, op.Id, op.Type, op.Shard, op.GIDs[0], op.ClientId)
+		case QueryCF:
+			sc.DPrintf("[%v(C%v-%v)] Refuse to %v CF%v for C%v (isn't the leader)\n",
+				basicInfo, op.ClientId, op.Id, op.Type, op.ConfigNum, op.ClientId)
+		}
+	}
+
+	return err, index
+}
+
+func (sc *ShardCtrler) waitForProcess(op Op, index int) (Err, *Config) {
+	basicInfo := sc.BasicInfo("waitForProcess")
+
 	sc.mu.Lock()
 	ch := sc.GetProcessedOpCh(index)
 	sc.mu.Unlock()
 
+	var (
+		err       Err
+		configRet *Config
+	)
 	timer := time.NewTimer(RpcTimeout * time.Millisecond)
 	select {
-	case executedOp := <-ch:
-		if executedOp.ClientId != startOp.ClientId || executedOp.Id != startOp.Id {
-			reply.Err = ErrWrongLeader
-			sc.DPrintf("[%v(C%v-%v)] Refuse to %v CF%v for C%v "+
-				"(don't match op identifier at I%v: (%v,%v) VS (%v,%v))\n",
-				basicInfo, args.ClientId, args.OpId, opType, args.Num, args.ClientId,
-				index, executedOp.ClientId, executedOp.Id, startOp.ClientId, startOp.Id)
+	case processedOp := <-ch:
+		if processedOp.ClientId != op.ClientId || processedOp.Id != op.Id {
+			err = ErrWrongLeader
+			switch op.Type {
+			case JoinRG:
+				sc.DPrintf("[%v(C%v-%v)] Refuse to %v RG(servers: %v) for C%v "+
+					"(don't match op identifier at I%v: (%v,%v) VS (%v,%v))\n",
+					basicInfo, op.ClientId, op.Id, op.Type, op.Servers, op.ClientId,
+					index, processedOp.ClientId, processedOp.Id, op.ClientId, op.Id)
+			case LeaveRG:
+				sc.DPrintf("[%v(C%v-%v)] Refuse to %v RG(gids: %v) for C%v "+
+					"(don't match op identifier at I%v: (%v,%v) VS (%v,%v))\n",
+					basicInfo, op.ClientId, op.Id, op.Type, op.GIDs, op.ClientId,
+					index, processedOp.ClientId, processedOp.Id, op.ClientId, op.Id)
+			case MoveSD:
+				sc.DPrintf("[%v(C%v-%v)] Refuse to %v SD%v to RG%v for C%v "+
+					"(don't match op identifier at I%v: (%v,%v) VS (%v,%v))\n",
+					basicInfo, op.ClientId, op.Id, op.Type, op.Shard, op.GIDs[0], op.ClientId,
+					index, processedOp.ClientId, processedOp.Id, op.ClientId, op.Id)
+			case QueryCF:
+				sc.DPrintf("[%v(C%v-%v)] Refuse to %v CF%v for C%v "+
+					"(don't match op identifier at I%v: (%v,%v) VS (%v,%v))\n",
+					basicInfo, op.ClientId, op.Id, op.Type, op.ConfigNum, op.ClientId,
+					index, processedOp.ClientId, processedOp.Id, op.ClientId, op.Id)
+			}
 		} else {
-			reply.Err = OK
-			reply.Config = *executedOp.Config
-			sc.DPrintf("[%v(C%v-%v)] %v CF%v(%v) for C%v\n",
-				basicInfo, args.ClientId, args.OpId, opType, args.Num, reply.Config, args.ClientId)
+			err = OK
+			switch op.Type {
+			case JoinRG:
+				sc.DPrintf("[%v(C%v-%v)] %v RG(servers: %v) for C%v\n",
+					basicInfo, op.ClientId, op.Id, op.Type, op.Servers, op.ClientId)
+			case LeaveRG:
+				sc.DPrintf("[%v(C%v-%v)] %v RG(gids: %v) for C%v\n",
+					basicInfo, op.ClientId, op.Id, op.Type, op.GIDs, op.ClientId)
+			case MoveSD:
+				sc.DPrintf("[%v(C%v-%v)] %v SD%v to RG%v for C%v\n",
+					basicInfo, op.ClientId, op.Id, op.Type, op.Shard, op.GIDs[0], op.ClientId)
+			case QueryCF:
+				configRet = processedOp.Config
+				sc.DPrintf("[%v(C%v-%v)] %v CF%v(%v) for C%v\n",
+					basicInfo, op.ClientId, op.Id, op.Type, op.ConfigNum, configRet, op.ClientId)
+			}
 		}
 	case <-timer.C:
-		reply.Err = ErrWrongLeader
-		sc.DPrintf("[%v(C%v-%v)] Refuse to %v CF%v for C%v (rpc timeout)\n",
-			basicInfo, args.ClientId, args.OpId, opType, args.Num, args.ClientId)
+		err = ErrWrongLeader
+		switch op.Type {
+		case JoinRG:
+			sc.DPrintf("[%v(C%v-%v)] Refuse to %v RG(servers: %v) for C%v (rpc timeout)\n",
+				basicInfo, op.ClientId, op.Id, op.Type, op.Servers, op.ClientId)
+		case LeaveRG:
+			sc.DPrintf("[%v(C%v-%v)] Refuse to %v RG(gids: %v) for C%v (rpc timeout)\n",
+				basicInfo, op.ClientId, op.Id, op.Type, op.GIDs, op.ClientId)
+		case MoveSD:
+			sc.DPrintf("[%v(C%v-%v)] Refuse to %v SD%v to RG%v for C%v (rpc timeout)\n",
+				basicInfo, op.ClientId, op.Id, op.Type, op.Shard, op.GIDs[0], op.ClientId)
+		case QueryCF:
+			sc.DPrintf("[%v(C%v-%v)] Refuse to %v CF%v for C%v (rpc timeout)\n",
+				basicInfo, op.ClientId, op.Id, op.Type, op.ConfigNum, op.ClientId)
+		}
 	}
 	timer.Stop()
 
 	sc.mu.Lock()
 	sc.DeleteProcessedOpCh(index)
 	sc.mu.Unlock()
-}
 
-func (sc *ShardCtrler) GetNewConfigAfterJoinOp(servers map[int][]string) *Config {
-	basicInfo := sc.BasicInfo("GetNewConfigAfterJoinOp")
-
-	ret := &Config{}
-	lastConfigIndex := len(sc.configs) - 1
-	if lastConfigIndex < 0 {
-		errMsg := fmt.Sprintf("[%v] lastConfigIndex < 0\n", basicInfo)
-		panic(errMsg)
-	}
-	lastConfig := &sc.configs[lastConfigIndex]
-
-	sc.DeepCopyConfig(ret, lastConfig)
-	ret.Num++
-
-	for gid, serverList := range servers {
-		ret.Groups[gid] = serverList
-	}
-
-	gid2shards := make(map[int][]int)
-	leftShards := make([]int, 0)
-	for gid, _ := range ret.Groups {
-		gid2shards[gid] = make([]int, 0)
-	}
-	for shard := 0; shard < NShards; shard++ {
-		gid := ret.Shards[shard]
-		if gid == 0 {
-			leftShards = append(leftShards, shard)
-		} else {
-			gid2shards[gid] = append(gid2shards[gid], shard)
-		}
-	}
-
-	//	Do load re-balance to adjust ret.Shards
-	sc.DPrintf("[%v] New config before rebalance: %v | gid2shards: %v | leftShards: %v\n",
-		basicInfo, ret, gid2shards, leftShards)
-	ret.Rebalance(gid2shards, leftShards)
-	sc.DPrintf("[%v] New config After rebalance: %v\n",
-		basicInfo, ret)
-
-	return ret
-}
-
-func (sc *ShardCtrler) GetNewConfigAfterLeaveOp(gids []int) *Config {
-	basicInfo := sc.BasicInfo("GetNewConfigAfterLeaveOp")
-
-	ret := &Config{}
-	lastConfigIndex := len(sc.configs) - 1
-	if lastConfigIndex < 0 {
-		errMsg := fmt.Sprintf("[%v] lastConfigIndex < 0\n", basicInfo)
-		panic(errMsg)
-	}
-	lastConfig := &sc.configs[lastConfigIndex]
-
-	sc.DeepCopyConfig(ret, lastConfig)
-	ret.Num++
-
-	gid2shards := make(map[int][]int)
-	for gid, _ := range ret.Groups {
-		gid2shards[gid] = make([]int, 0)
-	}
-	for shard := 0; shard < NShards; shard++ {
-		gid := ret.Shards[shard]
-		gid2shards[gid] = append(gid2shards[gid], shard)
-	}
-	leftShards := make([]int, 0)
-
-	for _, gid := range gids {
-		leftShards = append(leftShards, gid2shards[gid]...)
-		delete(gid2shards, gid)
-		delete(ret.Groups, gid)
-	}
-
-	//	Do load re-balance to adjust ret.Shards
-	sc.DPrintf("[%v] New config before rebalance: %v\n",
-		basicInfo, ret)
-	ret.Rebalance(gid2shards, leftShards)
-	sc.DPrintf("[%v] New config After rebalance: %v\n",
-		basicInfo, ret)
-
-	return ret
-}
-
-func (sc *ShardCtrler) GetNewConfigAfterMoveOp(shard int, gid int) *Config {
-	basicInfo := sc.BasicInfo("GetNewConfigAfterMoveOp")
-
-	ret := &Config{}
-	lastConfigIndex := len(sc.configs) - 1
-	if lastConfigIndex < 0 {
-		errMsg := fmt.Sprintf("[%v] lastConfigIndex < 0\n", basicInfo)
-		panic(errMsg)
-	}
-	lastConfig := &sc.configs[lastConfigIndex]
-
-	sc.DeepCopyConfig(ret, lastConfig)
-	ret.Num++
-	ret.Shards[shard] = gid
-
-	return ret
+	return err, configRet
 }
 
 //
@@ -428,11 +323,11 @@ func (sc *ShardCtrler) processor() {
 					var newConfig *Config
 					switch op.Type {
 					case JoinRG:
-						newConfig = sc.GetNewConfigAfterJoinOp(op.Servers)
+						newConfig = sc.getNewConfigAfterJoinOp(op.Servers)
 					case LeaveRG:
-						newConfig = sc.GetNewConfigAfterLeaveOp(op.GIDs)
+						newConfig = sc.getNewConfigAfterLeaveOp(op.GIDs)
 					case MoveSD:
-						newConfig = sc.GetNewConfigAfterMoveOp(op.Shard, op.GIDs[0])
+						newConfig = sc.getNewConfigAfterMoveOp(op.Shard, op.GIDs[0])
 					}
 					sc.configs = append(sc.configs, *newConfig)
 					sc.clientId2executedOpId[op.ClientId] = op.Id
@@ -452,6 +347,106 @@ func (sc *ShardCtrler) processor() {
 			lastProcessed = m.CommandIndex
 		}
 	}
+}
+
+func (sc *ShardCtrler) getNewConfigAfterJoinOp(servers map[int][]string) *Config {
+	basicInfo := sc.BasicInfo("getNewConfigAfterJoinOp")
+
+	ret := &Config{}
+	lastConfigIndex := len(sc.configs) - 1
+	if lastConfigIndex < 0 {
+		errMsg := fmt.Sprintf("[%v] lastConfigIndex < 0\n", basicInfo)
+		panic(errMsg)
+	}
+	lastConfig := &sc.configs[lastConfigIndex]
+
+	lastConfig.DeepCopyConfig(ret)
+	ret.Num++
+
+	for gid, serverList := range servers {
+		ret.Groups[gid] = serverList
+	}
+
+	gid2shards := make(map[int][]int)
+	leftShards := make([]int, 0)
+	for gid, _ := range ret.Groups {
+		gid2shards[gid] = make([]int, 0)
+	}
+	for shard := 0; shard < NShards; shard++ {
+		gid := ret.Shards[shard]
+		if gid == 0 {
+			leftShards = append(leftShards, shard)
+		} else {
+			gid2shards[gid] = append(gid2shards[gid], shard)
+		}
+	}
+
+	//	Do load re-balance to adjust ret.Shards
+	sc.DPrintf("[%v] New config before rebalance: %v | gid2shards: %v | leftShards: %v\n",
+		basicInfo, ret, gid2shards, leftShards)
+	ret.Rebalance(gid2shards, leftShards)
+	sc.DPrintf("[%v] New config After rebalance: %v\n",
+		basicInfo, ret)
+
+	return ret
+}
+
+func (sc *ShardCtrler) getNewConfigAfterLeaveOp(gids []int) *Config {
+	basicInfo := sc.BasicInfo("getNewConfigAfterLeaveOp")
+
+	ret := &Config{}
+	lastConfigIndex := len(sc.configs) - 1
+	if lastConfigIndex < 0 {
+		errMsg := fmt.Sprintf("[%v] lastConfigIndex < 0\n", basicInfo)
+		panic(errMsg)
+	}
+	lastConfig := &sc.configs[lastConfigIndex]
+
+	lastConfig.DeepCopyConfig(ret)
+	ret.Num++
+
+	gid2shards := make(map[int][]int)
+	for gid, _ := range ret.Groups {
+		gid2shards[gid] = make([]int, 0)
+	}
+	for shard := 0; shard < NShards; shard++ {
+		gid := ret.Shards[shard]
+		gid2shards[gid] = append(gid2shards[gid], shard)
+	}
+	leftShards := make([]int, 0)
+
+	for _, gid := range gids {
+		leftShards = append(leftShards, gid2shards[gid]...)
+		delete(gid2shards, gid)
+		delete(ret.Groups, gid)
+	}
+
+	//	Do load re-balance to adjust ret.Shards
+	sc.DPrintf("[%v] New config before rebalance: %v\n",
+		basicInfo, ret)
+	ret.Rebalance(gid2shards, leftShards)
+	sc.DPrintf("[%v] New config After rebalance: %v\n",
+		basicInfo, ret)
+
+	return ret
+}
+
+func (sc *ShardCtrler) getNewConfigAfterMoveOp(shard int, gid int) *Config {
+	basicInfo := sc.BasicInfo("getNewConfigAfterMoveOp")
+
+	ret := &Config{}
+	lastConfigIndex := len(sc.configs) - 1
+	if lastConfigIndex < 0 {
+		errMsg := fmt.Sprintf("[%v] lastConfigIndex < 0\n", basicInfo)
+		panic(errMsg)
+	}
+	lastConfig := &sc.configs[lastConfigIndex]
+
+	lastConfig.DeepCopyConfig(ret)
+	ret.Num++
+	ret.Shards[shard] = gid
+
+	return ret
 }
 
 //

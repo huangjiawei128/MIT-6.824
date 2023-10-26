@@ -81,8 +81,7 @@ func (ck *Clerk) Get(key string) string {
 			switch reply.Err {
 			case OK:
 				ret = reply.Value
-			case ErrNoKey:
-				ret = ""
+				break
 			case ErrWrongLeader:
 				ok = false
 				ck.UpdateTargetLeader()
@@ -122,6 +121,9 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		args.Op = PutKV
 	case "Append":
 		args.Op = AppendKV
+	default:
+		errorMsg := fmt.Sprintf("[%v] invalid op %v: (should be \"Put\" or \"Append\")\n", basicInfo, op)
+		panic(errorMsg)
 	}
 	ok := false
 	for !ok {
@@ -134,7 +136,10 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		if ok {
 			ck.DPrintf("[%v(%v)] Receive PutAppend ACK from S%v | err: %v | key: %v | value: %v\n",
 				basicInfo, args.OpId, ck.targetLeader, reply.Err, key, value)
-			if reply.Err == ErrWrongLeader {
+			switch reply.Err {
+			case OK:
+				break
+			case ErrWrongLeader:
 				ok = false
 				ck.UpdateTargetLeader()
 			}

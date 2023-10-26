@@ -49,44 +49,6 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	return ck
 }
 
-func (ck *Clerk) Query(num int) Config {
-	basicInfo := ck.BasicInfo("Query")
-
-	args := QueryArgs{
-		Num:      num,
-		ClientId: ck.clientId,
-		OpId:     ck.nextOpId,
-	}
-	ok := false
-	var ret Config
-	for !ok {
-		reply := QueryReply{}
-		ck.DPrintf("[%v(%v)] Send Query RPC to S%v | num: %v\n",
-			basicInfo, args.OpId, ck.targetLeader, num)
-
-		ok = ck.servers[ck.targetLeader].Call("ShardCtrler.Query", &args, &reply)
-
-		if ok {
-			ck.DPrintf("[%v(%v)] Receive Query ACK from S%v | err: %v | num: %v | config: %v\n",
-				basicInfo, args.OpId, ck.targetLeader, reply.Err, num, reply.Config)
-			switch reply.Err {
-			case OK:
-				ret = reply.Config
-				break
-			case ErrWrongLeader:
-				ok = false
-				ck.UpdateTargetLeader()
-			}
-		} else {
-			ck.DPrintf("[%v(%v)] Fail to receive Query ACK from S%v | num: %v\n",
-				basicInfo, args.OpId, ck.targetLeader, num)
-			ck.UpdateTargetLeader()
-		}
-	}
-	ck.nextOpId++
-	return ret
-}
-
 func (ck *Clerk) Join(servers map[int][]string) {
 	basicInfo := ck.BasicInfo("Join")
 
@@ -191,4 +153,42 @@ func (ck *Clerk) Move(shard int, gid int) {
 		}
 	}
 	ck.nextOpId++
+}
+
+func (ck *Clerk) Query(num int) Config {
+	basicInfo := ck.BasicInfo("Query")
+
+	args := QueryArgs{
+		Num:      num,
+		ClientId: ck.clientId,
+		OpId:     ck.nextOpId,
+	}
+	ok := false
+	var ret Config
+	for !ok {
+		reply := QueryReply{}
+		ck.DPrintf("[%v(%v)] Send Query RPC to S%v | num: %v\n",
+			basicInfo, args.OpId, ck.targetLeader, num)
+
+		ok = ck.servers[ck.targetLeader].Call("ShardCtrler.Query", &args, &reply)
+
+		if ok {
+			ck.DPrintf("[%v(%v)] Receive Query ACK from S%v | err: %v | num: %v | config: %v\n",
+				basicInfo, args.OpId, ck.targetLeader, reply.Err, num, reply.Config)
+			switch reply.Err {
+			case OK:
+				ret = reply.Config
+				break
+			case ErrWrongLeader:
+				ok = false
+				ck.UpdateTargetLeader()
+			}
+		} else {
+			ck.DPrintf("[%v(%v)] Fail to receive Query ACK from S%v | num: %v\n",
+				basicInfo, args.OpId, ck.targetLeader, num)
+			ck.UpdateTargetLeader()
+		}
+	}
+	ck.nextOpId++
+	return ret
 }

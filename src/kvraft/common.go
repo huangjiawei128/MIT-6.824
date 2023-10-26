@@ -20,7 +20,6 @@ const (
 
 const (
 	OK             = "OK"
-	ErrNoKey       = "ErrNoKey"
 	ErrWrongLeader = "ErrWrongLeader"
 )
 
@@ -31,8 +30,6 @@ func (err Err) String() string {
 	switch err {
 	case OK:
 		ret = "OK"
-	case ErrNoKey:
-		ret = "ErrNoKey"
 	case ErrWrongLeader:
 		ret = "ErrWrongLeader"
 	}

@@ -150,6 +150,15 @@ func (config *Config) BasicInfo(methodName string) string {
 	return fmt.Sprintf("CF%v Config.%v", config.Num, methodName)
 }
 
+func (config *Config) DeepCopyConfig(configCopy *Config) {
+	configCopy.Num = config.Num
+	configCopy.Shards = config.Shards
+	configCopy.Groups = make(map[int][]string)
+	for gid, serverList := range config.Groups {
+		configCopy.Groups[gid] = serverList
+	}
+}
+
 func getRGInfos(gid2Shards map[int][]int) []RGInfo {
 	rgInfos := make([]RGInfo, 0)
 	for gid, shards := range gid2Shards {
@@ -283,13 +292,4 @@ func (sc *ShardCtrler) GetValidConfigNum(configNum int) int {
 		}
 	}
 	return configNum
-}
-
-func (sc *ShardCtrler) DeepCopyConfig(dst *Config, src *Config) {
-	dst.Num = src.Num
-	dst.Shards = src.Shards
-	dst.Groups = make(map[int][]string)
-	for gid, serverList := range src.Groups {
-		dst.Groups[gid] = serverList
-	}
 }

@@ -109,9 +109,10 @@ type Raft struct {
 	matchIndex []int
 
 	// Other state
-	initialTime        time.Time
-	role               Role
-	voteNum            int
+	initialTime time.Time
+	role        Role
+	voteNum     int
+
 	applyCh            chan ApplyMsg
 	nextApplyOrder     int
 	finishedApplyOrder int
@@ -237,26 +238,44 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
+	if index > rf.commitIndex {
+		errorMsg := fmt.Sprintf("[%v] index > commitIndex: %v VS %v\n",
+			rf.BasicInfoWithTerm(methodName), index, rf.commitIndex)
+		rf.mu.Unlock()
+		panic(errorMsg)
+	}
+
+	if index > rf.lastApplied {
+		errorMsg := fmt.Sprintf("[%v] index > lastApplied: %v VS %v\n",
+			rf.BasicInfoWithTerm(methodName), index, rf.lastApplied)
+		rf.mu.Unlock()
+		panic(errorMsg)
+	}
+
 	if index <= rf.lastIncludedIndex {
 		rf.DPrintf("[%v] Fail to make the snapshot (have ahead lastIncludedIndex: %v VS %v)\n",
 			rf.BasicInfoWithTerm(methodName), rf.lastIncludedIndex, index)
 		return
 	}
 
-	rf.DPrintf("[%v] Before make the snapshot: "+
+	rf.DPrintf("[%v] Before making the snapshot: "+
 		"lastLogIndex: %v | lastIncludedIndex: %v | lastIncludedTerm: %v | len(log): %v\n",
 		rf.BasicInfoWithTerm(methodName), rf.GetLastLogIndex(), rf.lastIncludedIndex, rf.lastIncludedTerm, len(rf.log))
 
 	newLog := make([]LogEntry, 1)
-	if rf.GetLastLogIndex() > index {
+	lastLogIndex := rf.GetLastLogIndex()
+	if index < lastLogIndex {
 		newLog = append(newLog, rf.GetRightSubLog(index+1)...)
+	} else if index > lastLogIndex {
+		errorMsg := fmt.Sprintf("[%v] index > lastLogIndex: %v VS %v\n",
+			rf.BasicInfoWithTerm(methodName), index, lastLogIndex)
+		rf.mu.Unlock()
+		panic(errorMsg)
 	}
 	rf.lastIncludedIndex, rf.lastIncludedTerm = index, rf.GetTerm(index)
 	rf.log = newLog
 	rf.persister.SaveStateAndSnapshot(rf.stateData(), snapshot)
 
-	rf.lastApplied = Max(rf.lastApplied, rf.lastIncludedIndex)
-	rf.commitIndex = Max(rf.commitIndex, rf.lastIncludedIndex)
 	rf.DPrintf("[%v] Make the snapshot | index: %v | term: %v | len(log): %v\n",
 		rf.BasicInfoWithTerm(methodName), rf.lastIncludedIndex, rf.lastIncludedTerm, len(rf.log))
 }
@@ -288,17 +307,16 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 
 	rf.mu.Lock()
-	defer func() {
-		if len(rf.newCommand) != cap(rf.newCommand) {
-			rf.newCommand <- true
-		}
-	}()
-	defer rf.mu.Unlock()
-
 	if rf.role != Leader {
 		rf.DPrintf("[%v] Fail to append the command \"%v\" (isn't the leader)\n",
 			rf.BasicInfoWithTerm(methodName), Command2Str(command))
 	} else {
+		defer func() {
+			if len(rf.newCommand) != cap(rf.newCommand) {
+				rf.newCommand <- true
+			}
+		}()
+
 		index = rf.GetLastLogIndex() + 1
 		term = rf.currentTerm
 		isLeader = true
@@ -311,6 +329,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		rf.DPrintf("[%v] Append the command \"%v\" | index: %v\n",
 			rf.BasicInfoWithTerm(methodName), Command2Str(command), index)
 	}
+	rf.mu.Unlock()
 
 	return index, term, isLeader
 }
@@ -386,10 +405,10 @@ func (rf *Raft) electTicker() {
 					return
 				}
 
-				ok := rf.sendRequestVote(server, &args, &reply)
+				ok := rf.sendRequestVote(server, args, reply)
 
 				rf.mu.Lock()
-				rf.sendRequestVotePro(server, &args, &reply, ok)
+				rf.sendRequestVotePro(server, args, reply, ok)
 				rf.mu.Unlock()
 			}(server)
 		}
@@ -428,10 +447,10 @@ func (rf *Raft) appendTicker() {
 						return
 					}
 
-					ok := rf.sendInstallSnapshot(server, &args, &reply)
+					ok := rf.sendInstallSnapshot(server, args, reply)
 
 					rf.mu.Lock()
-					rf.sendInstallSnapshotPro(server, &args, &reply, ok)
+					rf.sendInstallSnapshotPro(server, args, reply, ok)
 					rf.mu.Unlock()
 				} else {
 					args, reply, preOk := rf.sendAppendEntriesPre(server)
@@ -440,10 +459,10 @@ func (rf *Raft) appendTicker() {
 						return
 					}
 
-					ok := rf.sendAppendEntries(server, &args, &reply)
+					ok := rf.sendAppendEntries(server, args, reply)
 
 					rf.mu.Lock()
-					rf.sendAppendEntriesPro(server, &args, &reply, ok)
+					rf.sendAppendEntriesPro(server, args, reply, ok)
 					rf.mu.Unlock()
 				}
 			}(server)
@@ -518,7 +537,11 @@ func (rf *Raft) applyTicker() {
 
 		applyOrder := rf.nextApplyOrder
 		rf.nextApplyOrder++
-		for applyOrder != rf.finishedApplyOrder+1 && !rf.killed() {
+		for applyOrder != rf.finishedApplyOrder+1 {
+			if rf.killed() {
+				rf.mu.Unlock()
+				return
+			}
 			rf.applyCond.Wait()
 		}
 		rf.mu.Unlock()
