@@ -104,7 +104,7 @@ func (ck *Clerk) Get(key string) string {
 			targetLeader := ck.getTargetLeader(gid, len(servers))
 			// try each server for the shard.
 			ok := false
-			for !ok {
+			for !ok { //	FIXME: consider config change?
 				srv := ck.make_end(servers[targetLeader])
 				reply := GetReply{}
 				ck.DPrintf("[%v(%v)] Send Get RPC to S%v-%v | key: %v | shard: %v\n",
@@ -118,8 +118,9 @@ func (ck *Clerk) Get(key string) string {
 					if reply.Err == OK || reply.Err == ErrNoKey {
 						ret = reply.Value
 						flag = true
+						break
 					} else if reply.Err == ErrWrongGroup {
-
+						break
 					} else if reply.Err == ErrWrongLeader {
 						ok = false
 						targetLeader = ck.UpdateTargetLeader(gid, len(servers))
@@ -185,8 +186,9 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 						basicInfo, args.OpId, gid, targetLeader, reply.Err, key, shard, value)
 					if reply.Err == OK || reply.Err == ErrNoKey {
 						flag = true
+						break
 					} else if reply.Err == ErrWrongGroup {
-
+						break
 					} else if reply.Err == ErrWrongLeader {
 						ok = false
 						targetLeader = ck.UpdateTargetLeader(gid, len(servers))

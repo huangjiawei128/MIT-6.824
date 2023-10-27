@@ -135,7 +135,7 @@ func (kv *ShardKV) waitForProcess(op Op, index int) (Err, string) {
 	basicInfo := kv.BasicInfo("waitForProcess")
 
 	kv.mu.Lock()
-	ch := kv.GetProcessedOpCh(index)
+	ch := kv.GetProcessedOpCh(index, true)
 	kv.mu.Unlock()
 
 	var (
@@ -281,7 +281,7 @@ func (kv *ShardKV) processor() {
 						basicInfo, op, kv.kvStore.Get(op.Key))
 				}
 			}
-			ch := kv.GetProcessedOpCh(m.CommandIndex)
+			ch := kv.GetProcessedOpCh(m.CommandIndex, false)
 			kv.mu.Unlock()
 
 			raftStateSize := kv.rf.GetPersister().RaftStateSize()
@@ -294,9 +294,11 @@ func (kv *ShardKV) processor() {
 				kv.rf.Snapshot(m.CommandIndex, snapshotData)
 			}
 
-			ch <- op
-			kv.DPrintf("[%v] After return the processed op \"%v\"\n",
-				basicInfo, op)
+			if ch != nil {
+				ch <- op
+				kv.DPrintf("[%v] After return the processed op \"%v\"\n",
+					basicInfo, op)
+			}
 			lastProcessed = m.CommandIndex
 		}
 	}

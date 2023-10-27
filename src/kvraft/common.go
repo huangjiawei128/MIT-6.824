@@ -146,9 +146,9 @@ func (kv *KVServer) BasicInfo(methodName string) string {
 	return fmt.Sprintf("S%v KVServer.%v", kv.me, methodName)
 }
 
-func (kv *KVServer) GetProcessedOpCh(index int) chan Op {
+func (kv *KVServer) GetProcessedOpCh(index int, create bool) chan Op {
 	ch, ok := kv.index2processedOpCh[index]
-	if !ok {
+	if !ok && create {
 		ch = make(chan Op, 1)
 		kv.index2processedOpCh[index] = ch
 	}

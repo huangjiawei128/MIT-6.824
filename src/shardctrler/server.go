@@ -156,7 +156,10 @@ func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
 	}
 
 	waitErr, configRet := sc.waitForProcess(op, index)
-	reply.Err, reply.Config = waitErr, *configRet
+	reply.Err = waitErr
+	if configRet != nil {
+		reply.Config = *configRet
+	}
 }
 
 func (sc *ShardCtrler) prepareForProcess(op Op) (Err, int) {
@@ -189,7 +192,7 @@ func (sc *ShardCtrler) waitForProcess(op Op, index int) (Err, *Config) {
 	basicInfo := sc.BasicInfo("waitForProcess")
 
 	sc.mu.Lock()
-	ch := sc.GetProcessedOpCh(index)
+	ch := sc.GetProcessedOpCh(index, true)
 	sc.mu.Unlock()
 
 	var (
@@ -338,12 +341,14 @@ func (sc *ShardCtrler) processor() {
 						basicInfo, op)
 				}
 			}
-			ch := sc.GetProcessedOpCh(m.CommandIndex)
+			ch := sc.GetProcessedOpCh(m.CommandIndex, false)
 			sc.mu.Unlock()
 
-			ch <- op
-			sc.DPrintf("[%v] After return the processed op \"%v\"\n",
-				basicInfo, op)
+			if ch != nil {
+				ch <- op
+				sc.DPrintf("[%v] After return the processed op \"%v\"\n",
+					basicInfo, op)
+			}
 			lastProcessed = m.CommandIndex
 		}
 	}

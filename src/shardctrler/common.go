@@ -259,9 +259,9 @@ func (sc *ShardCtrler) BasicInfo(methodName string) string {
 	return fmt.Sprintf("S%v ShardCtrler.%v", sc.me, methodName)
 }
 
-func (sc *ShardCtrler) GetProcessedOpCh(index int) chan Op {
+func (sc *ShardCtrler) GetProcessedOpCh(index int, create bool) chan Op {
 	ch, ok := sc.index2processedOpCh[index]
-	if !ok {
+	if !ok && create {
 		ch = make(chan Op, 1)
 		sc.index2processedOpCh[index] = ch
 	}
