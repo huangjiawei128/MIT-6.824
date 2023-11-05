@@ -71,10 +71,12 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 	ck.sm = shardctrler.MakeClerk(ctrlers)
 	ck.make_end = make_end
 	// You'll have to add code here.
+	ck.config = ck.sm.Query(-1)
 	ck.clientId = Int64Id(nrand())
 	mathRand.Seed(time.Now().Unix() + int64(ck.clientId))
 	ck.nextOpId = 0
 	ck.gid2targetLeader = make(map[int]int)
+	ck.sm.SetHostInfo(fmt.Sprintf("C%v", ck.clientId))
 	ck.DPrintf("[%v] Make new shard KV clerk | sm.clientId: %v\n",
 		ck.BasicInfo(""), ck.sm.GetClientId())
 	return ck
@@ -90,9 +92,10 @@ func (ck *Clerk) Get(key string) string {
 	basicInfo := ck.BasicInfo("Get")
 
 	args := GetArgs{
-		Key:      key,
-		ClientId: ck.clientId,
-		OpId:     ck.nextOpId,
+		Key:       key,
+		ClientId:  ck.clientId,
+		OpId:      ck.nextOpId,
+		ConfigNum: ck.config.Num,
 	}
 	shard := key2shard(key)
 
@@ -101,10 +104,10 @@ func (ck *Clerk) Get(key string) string {
 		gid := ck.config.Shards[shard]
 		flag := false
 		if servers, _ok := ck.config.Groups[gid]; _ok {
-			targetLeader := ck.getTargetLeader(gid, len(servers))
 			// try each server for the shard.
 			ok := false
-			for !ok { //	FIXME: consider config change?
+			targetLeader := ck.getTargetLeader(gid, len(servers))
+			for !ok {
 				srv := ck.make_end(servers[targetLeader])
 				reply := GetReply{}
 				ck.DPrintf("[%v(%v)] Send Get RPC to S%v-%v | key: %v | shard: %v\n",
@@ -115,13 +118,19 @@ func (ck *Clerk) Get(key string) string {
 				if ok {
 					ck.DPrintf("[%v(%v)] Receive Get ACK from S%v-%v | err: %v | key: %v | shard: %v | value: %v\n",
 						basicInfo, args.OpId, gid, targetLeader, reply.Err, key, shard, reply.Value)
-					if reply.Err == OK || reply.Err == ErrNoKey {
+					switch reply.Err {
+					case OK:
 						ret = reply.Value
 						flag = true
 						break
-					} else if reply.Err == ErrWrongGroup {
+					case ErrWrongGroup:
 						break
-					} else if reply.Err == ErrWrongLeader {
+					case ErrNotArrivedShard:
+						ok = false
+					case ErrWrongLeader:
+						ok = false
+						targetLeader = ck.UpdateTargetLeader(gid, len(servers))
+					case ErrOvertime:
 						ok = false
 						targetLeader = ck.UpdateTargetLeader(gid, len(servers))
 					}
@@ -136,9 +145,10 @@ func (ck *Clerk) Get(key string) string {
 		if flag {
 			break
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(ConfigQueryInterval * time.Millisecond)
 		// ask controler for the latest configuration.
 		ck.config = ck.sm.Query(-1)
+		args.ConfigNum = ck.config.Num
 	}
 	ck.nextOpId++
 	return ret
@@ -152,10 +162,11 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	basicInfo := ck.BasicInfo("PutAppend")
 
 	args := PutAppendArgs{
-		Key:      key,
-		Value:    value,
-		ClientId: ck.clientId,
-		OpId:     ck.nextOpId,
+		Key:       key,
+		Value:     value,
+		ClientId:  ck.clientId,
+		OpId:      ck.nextOpId,
+		ConfigNum: ck.config.Num,
 	}
 	switch op {
 	case "Put":
@@ -171,8 +182,8 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		if servers, _ok := ck.config.Groups[gid]; _ok {
 			// try each server for the shard.
 			ok := false
+			targetLeader := ck.getTargetLeader(gid, len(servers))
 			for !ok {
-				targetLeader := ck.getTargetLeader(gid, len(servers))
 				srv := ck.make_end(servers[targetLeader])
 				reply := GetReply{}
 				ck.DPrintf("[%v(%v)] Send PutAppend RPC to S%v-%v | op: %v | key: %v | shard: %v | value: %v\n",
@@ -184,12 +195,18 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 					ck.DPrintf("[%v(%v)] Receive PutAppend ACK from S%v-%v | err: %v | "+
 						"key: %v | shard: %v | value: %v\n",
 						basicInfo, args.OpId, gid, targetLeader, reply.Err, key, shard, value)
-					if reply.Err == OK || reply.Err == ErrNoKey {
+					switch reply.Err {
+					case OK:
 						flag = true
 						break
-					} else if reply.Err == ErrWrongGroup {
+					case ErrWrongGroup:
 						break
-					} else if reply.Err == ErrWrongLeader {
+					case ErrNotArrivedShard:
+						ok = false
+					case ErrWrongLeader:
+						ok = false
+						targetLeader = ck.UpdateTargetLeader(gid, len(servers))
+					case ErrOvertime:
 						ok = false
 						targetLeader = ck.UpdateTargetLeader(gid, len(servers))
 					}
@@ -205,9 +222,10 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		if flag {
 			break
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(ConfigQueryInterval * time.Millisecond)
 		// ask controler for the latest configuration.
 		ck.config = ck.sm.Query(-1)
+		args.ConfigNum = ck.config.Num
 	}
 	ck.nextOpId++
 }

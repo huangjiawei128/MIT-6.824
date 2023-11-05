@@ -15,12 +15,13 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 }
 
 const (
-	RpcTimeout = 250
+	ProcessWaitTimeout = 250
 )
 
 const (
 	OK             = "OK"
 	ErrWrongLeader = "ErrWrongLeader"
+	ErrOvertime    = "ErrOvertime"
 )
 
 type Err string
@@ -32,6 +33,8 @@ func (err Err) String() string {
 		ret = "OK"
 	case ErrWrongLeader:
 		ret = "ErrWrongLeader"
+	case ErrOvertime:
+		ret = "ErrOvertime"
 	}
 	return ret
 }
@@ -54,32 +57,53 @@ func Value2Str(value interface{}) string {
 	return ret
 }
 
-// Put or Append
-type PutAppendArgs struct {
-	Key   string
-	Value string
-	Op    OpType // "Put" or "Append"
-	// You'll have to add definitions here.
+//	==============================
+//	Op
+//	==============================
+type OpType int
+
+const (
+	GetV = iota
+	PutKV
+	AppendKV
+)
+
+func (opType OpType) String() string {
+	var ret string
+	switch opType {
+	case GetV:
+		ret = "Get"
+	case PutKV:
+		ret = "Put"
+	case AppendKV:
+		ret = "Append"
+	}
+	return ret
+}
+
+type Op struct {
+	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	Id       int
 	ClientId Int64Id
-	OpId     int
-}
 
-type PutAppendReply struct {
-	Err Err
-}
-
-type GetArgs struct {
-	Key string
-	// You'll have to add definitions here.
-	ClientId Int64Id
-	OpId     int
-}
-
-type GetReply struct {
-	Err   Err
+	Type  OpType
+	Key   string
 	Value string
+}
+
+func (op Op) String() string {
+	var ret string
+	ret = fmt.Sprintf("{Id: %v | ClientId: %v | Type: %v | Key: %v | Value: %v}",
+		op.Id, op.ClientId, op.Type, Key2Str(op.Key), Value2Str(op.Value))
+	return ret
+}
+
+type OpResult struct {
+	Id       int
+	ClientId Int64Id
+	Value    string
 }
 
 //	==============================
@@ -146,17 +170,26 @@ func (kv *KVServer) BasicInfo(methodName string) string {
 	return fmt.Sprintf("S%v KVServer.%v", kv.me, methodName)
 }
 
-func (kv *KVServer) GetProcessedOpCh(index int, create bool) chan Op {
-	ch, ok := kv.index2processedOpCh[index]
+func (kv *KVServer) GetProcessedOpResultCh(index int, create bool) chan OpResult {
+	ch, ok := kv.index2processedOpResultCh[index]
 	if !ok && create {
-		ch = make(chan Op, 1)
-		kv.index2processedOpCh[index] = ch
+		ch = make(chan OpResult, 1)
+		kv.index2processedOpResultCh[index] = ch
 	}
 	return ch
 }
 
-func (kv *KVServer) DeleteProcessedOpCh(index int) {
-	delete(kv.index2processedOpCh, index)
+func (kv *KVServer) DeleteProcessedOpResultCh(index int) {
+	delete(kv.index2processedOpResultCh, index)
+}
+
+func (kv *KVServer) NotifyProcessedOpResultCh(index int, opResult *OpResult) {
+	kv.mu.Lock()
+	ch := kv.GetProcessedOpResultCh(index, false)
+	kv.mu.Unlock()
+	if ch != nil {
+		ch <- *opResult
+	}
 }
 
 func (kv *KVServer) OpExecuted(clientId Int64Id, opId int) bool {

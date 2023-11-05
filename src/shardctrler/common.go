@@ -16,7 +16,7 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 }
 
 const (
-	RpcTimeout = 250
+	ProcessWaitTimeout = 250
 )
 
 //
@@ -47,6 +47,12 @@ type Config struct {
 	Groups map[int][]string // gid -> servers[]
 }
 
+func (config Config) String() string {
+	ret := fmt.Sprintf("{Num: %v | Shards: %v | Groups: %v}",
+		config.Num, config.Shards, config.Groups)
+	return ret
+}
+
 type RGInfo struct {
 	GID      int
 	ShardNum int
@@ -55,6 +61,7 @@ type RGInfo struct {
 const (
 	OK             = "OK"
 	ErrWrongLeader = "ErrWrongLeader"
+	ErrOvertime    = "ErrOverTime"
 )
 
 type Err string
@@ -66,50 +73,73 @@ func (err Err) String() string {
 		ret = "OK"
 	case ErrWrongLeader:
 		ret = "ErrWrongLeader"
+	case ErrOvertime:
+		ret = "ErrOvertime"
 	}
 	return ret
 }
 
-type JoinArgs struct {
-	Servers  map[int][]string // new GID -> servers mappings
+//	==============================
+//	Op
+//	==============================
+type OpType int
+
+const (
+	JoinRG = iota
+	LeaveRG
+	MoveSD
+	QueryCF
+)
+
+func (opType OpType) String() string {
+	var ret string
+	switch opType {
+	case JoinRG:
+		ret = "Join"
+	case LeaveRG:
+		ret = "Leave"
+	case MoveSD:
+		ret = "Move"
+	case QueryCF:
+		ret = "Query"
+	}
+	return ret
+}
+
+type Op struct {
+	// Your data here.
+	Id       int
 	ClientId Int64Id
-	OpId     int
+
+	Type      OpType
+	Servers   map[int][]string
+	GIDs      []int
+	Shard     int
+	ConfigNum int
 }
 
-type JoinReply struct {
-	Err Err
-}
-
-type LeaveArgs struct {
-	GIDs     []int
+type OpResult struct {
+	Id       int
 	ClientId Int64Id
-	OpId     int
+	Config   *Config
 }
 
-type LeaveReply struct {
-	Err Err
-}
-
-type MoveArgs struct {
-	Shard    int
-	GID      int
-	ClientId Int64Id
-	OpId     int
-}
-
-type MoveReply struct {
-	Err Err
-}
-
-type QueryArgs struct {
-	Num      int // desired config number
-	ClientId Int64Id
-	OpId     int
-}
-
-type QueryReply struct {
-	Err    Err
-	Config Config
+func (op Op) String() string {
+	var ret string
+	ret = fmt.Sprintf("{Id: %v | ClientId: %v | Type: %v | ",
+		op.Id, op.ClientId, op.Type)
+	switch op.Type {
+	case QueryCF:
+		ret += fmt.Sprintf("ConfigNum: %v", op.ConfigNum)
+	case JoinRG:
+		ret += fmt.Sprintf("Servers: %v", op.Servers)
+	case LeaveRG:
+		ret += fmt.Sprintf("GIDs: %v", op.GIDs)
+	case MoveSD:
+		ret += fmt.Sprintf("Shard: %v | GID: %v", op.Shard, op.GIDs[0])
+	}
+	ret += "}"
+	return ret
 }
 
 //	==============================
@@ -124,7 +154,7 @@ func (ck *Clerk) BasicInfo(methodName string) string {
 	if methodName == "" {
 		return fmt.Sprintf("Ctrler-C%v Clerk", ck.clientId)
 	}
-	return fmt.Sprintf("Ctrler-C%v Clerk.%v", ck.clientId, methodName)
+	return fmt.Sprintf("Ctrler-C%v %v Clerk.%v", ck.clientId, ck.hostInfo, methodName)
 }
 
 func (ck *Clerk) UpdateTargetLeader() {
@@ -133,6 +163,10 @@ func (ck *Clerk) UpdateTargetLeader() {
 
 func (ck *Clerk) GetClientId() Int64Id {
 	return ck.clientId
+}
+
+func (ck *Clerk) SetHostInfo(info string) {
+	ck.hostInfo = info
 }
 
 //	==============================
@@ -174,9 +208,9 @@ func getRGInfos(gid2Shards map[int][]int) []RGInfo {
 	return rgInfos
 }
 
-func getGoalShardNum(shardsNum int, rgNum int) []int {
+func getGoalShardNum(shardNum int, rgNum int) []int {
 	goalShardNum := make([]int, rgNum)
-	minNum, leftNum := shardsNum/rgNum, shardsNum%rgNum
+	minNum, leftNum := shardNum/rgNum, shardNum%rgNum
 	for i := 0; i < rgNum; i++ {
 		goalShardNum[i] = minNum
 		if i+leftNum >= rgNum {
@@ -259,17 +293,26 @@ func (sc *ShardCtrler) BasicInfo(methodName string) string {
 	return fmt.Sprintf("S%v ShardCtrler.%v", sc.me, methodName)
 }
 
-func (sc *ShardCtrler) GetProcessedOpCh(index int, create bool) chan Op {
-	ch, ok := sc.index2processedOpCh[index]
+func (sc *ShardCtrler) GetProcessedOpResultCh(index int, create bool) chan OpResult {
+	ch, ok := sc.index2processedOpResultCh[index]
 	if !ok && create {
-		ch = make(chan Op, 1)
-		sc.index2processedOpCh[index] = ch
+		ch = make(chan OpResult, 1)
+		sc.index2processedOpResultCh[index] = ch
 	}
 	return ch
 }
 
-func (sc *ShardCtrler) DeleteProcessedOpCh(index int) {
-	delete(sc.index2processedOpCh, index)
+func (sc *ShardCtrler) DeleteProcessedOpResultCh(index int) {
+	delete(sc.index2processedOpResultCh, index)
+}
+
+func (sc *ShardCtrler) NotifyProcessedOpResultCh(index int, opResult *OpResult) {
+	sc.mu.Lock()
+	ch := sc.GetProcessedOpResultCh(index, false)
+	sc.mu.Unlock()
+	if ch != nil {
+		ch <- *opResult
+	}
 }
 
 func (sc *ShardCtrler) OpExecuted(clientId Int64Id, opId int) bool {

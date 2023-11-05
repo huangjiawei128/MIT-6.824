@@ -12,45 +12,6 @@ import (
 	"time"
 )
 
-type OpType int
-
-const (
-	GetV = iota
-	PutKV
-	AppendKV
-)
-
-func (opType OpType) String() string {
-	var ret string
-	switch opType {
-	case GetV:
-		ret = "Get"
-	case PutKV:
-		ret = "Put"
-	case AppendKV:
-		ret = "Append"
-	}
-	return ret
-}
-
-type Op struct {
-	// Your definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
-	Id       int
-	ClientId Int64Id
-	Type     OpType
-	Key      string
-	Value    string
-}
-
-func (op Op) String() string {
-	ret := ""
-	ret = fmt.Sprintf("Id: %v | ClientId: %v | Type: %v | Key: %v | Value: %v",
-		op.Id, op.ClientId, op.Type, Key2Str(op.Key), Value2Str(op.Value))
-	return ret
-}
-
 type ShardKV struct {
 	mu           sync.Mutex
 	me           int
@@ -64,128 +25,17 @@ type ShardKV struct {
 	// Your definitions here.
 	dead int32 // set by Kill()
 
-	mck                   *shardctrler.Clerk
-	clientId2executedOpId map[Int64Id]int
-	index2processedOpCh   map[int]chan Op
-	kvStore               KVStore
+	mck                     *shardctrler.Clerk
+	clientId2executedOpId   map[Int64Id]int
+	index2processedResultCh map[int]chan ProcessResult
+	kvStore                 KVStore
 
-	curConfig  *shardctrler.Config
-	lastConfig *shardctrler.Config
-}
-
-func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
-	opType := OpType(GetV)
-	op := Op{
-		Id:       args.OpId,
-		ClientId: args.ClientId,
-		Type:     opType,
-		Key:      args.Key,
-	}
-
-	prepareErr, index := kv.prepareForProcess(op)
-	if prepareErr != OK {
-		reply.Err = prepareErr
-		return
-	}
-
-	reply.Err, reply.Value = kv.waitForProcess(op, index)
-}
-
-func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
-	opType := args.Op
-	op := Op{
-		Id:       args.OpId,
-		ClientId: args.ClientId,
-		Type:     opType,
-		Key:      args.Key,
-		Value:    args.Value,
-	}
-
-	prepareErr, index := kv.prepareForProcess(op)
-	if prepareErr != OK {
-		reply.Err = prepareErr
-		return
-	}
-
-	reply.Err, _ = kv.waitForProcess(op, index)
-}
-
-func (kv *ShardKV) prepareForProcess(op Op) (Err, int) {
-	basicInfo := kv.BasicInfo("prepareForProcess")
-
-	index, _, isLeader := kv.rf.Start(op)
-	var err Err = OK
-	if !isLeader {
-		err = ErrWrongLeader
-		if op.Type == GetV {
-			kv.DPrintf("[%v(C%v-%v)] Refuse to %v V of K(%v) for C%v (isn't the leader)\n",
-				basicInfo, op.ClientId, op.Id, op.Type, Key2Str(op.Key), op.ClientId)
-		} else if op.Type == PutKV || op.Type == AppendKV {
-			kv.DPrintf("[%v(C%v-%v)] Refuse to %v V(%v) of K(%v) for C%v (isn't the leader)\n",
-				basicInfo, op.ClientId, op.Id, op.Type, Value2Str(op.Value), Key2Str(op.Key), op.ClientId)
-		}
-	}
-
-	return err, index
-}
-
-func (kv *ShardKV) waitForProcess(op Op, index int) (Err, string) {
-	basicInfo := kv.BasicInfo("waitForProcess")
-
-	kv.mu.Lock()
-	ch := kv.GetProcessedOpCh(index, true)
-	kv.mu.Unlock()
-
-	var (
-		err   Err
-		value string
-	)
-	timer := time.NewTimer(RpcTimeout * time.Millisecond)
-	select {
-	case executedOp := <-ch:
-		if executedOp.ClientId != op.ClientId || executedOp.Id != op.Id {
-			err = ErrWrongLeader
-			if op.Type == GetV {
-				kv.DPrintf("[%v(C%v-%v)] Refuse to %v V of K(%v) for C%v "+
-					"(don't match op identifier at I%v: (%v,%v) VS (%v,%v))\n",
-					basicInfo, op.ClientId, op.Id, op.Type, Key2Str(op.Key), op.ClientId,
-					index, executedOp.ClientId, executedOp.Id, op.ClientId, op.Id)
-			} else if op.Type == PutKV || op.Type == AppendKV {
-				kv.DPrintf("[%v(C%v-%v)] Refuse to %v V(%v) of K(%v) for C%v "+
-					"(don't match op identifier at I%v: (%v,%v) VS (%v,%v))\n",
-					basicInfo, op.ClientId, op.Id, op.Type, Value2Str(op.Value), Key2Str(op.Key), op.ClientId,
-					index, executedOp.ClientId, executedOp.Id, op.ClientId, op.Id)
-			}
-		} else {
-			err = OK
-			if op.Type == GetV {
-				value = executedOp.Value
-				kv.DPrintf("[%v(C%v-%v)] %v V(%v) of K(%v) for C%v\n",
-					basicInfo, op.ClientId, op.Id, op.Type, Value2Str(value), Key2Str(op.Key), op.ClientId)
-			} else if op.Type == PutKV || op.Type == AppendKV {
-				kv.DPrintf("[%v(C%v-%v)] %v V(%v) of K(%v) for C%v\n",
-					basicInfo, op.ClientId, op.Id, op.Type, Value2Str(op.Value), Key2Str(op.Key), op.ClientId)
-			}
-		}
-	case <-timer.C:
-		err = ErrWrongLeader
-		if op.Type == GetV {
-			kv.DPrintf("[%v(C%v-%v)] Refuse to %v V of K(%v) for C%v (rpc timeout)\n",
-				basicInfo, op.ClientId, op.Id, op.Type, Key2Str(op.Key), op.ClientId)
-		} else if op.Type == PutKV || op.Type == AppendKV {
-			kv.DPrintf("[%v(C%v-%v)] Refuse to %v V(%v) of K(%v) for C%v (rpc timeout)\n",
-				basicInfo, op.ClientId, op.Id, op.Type, Value2Str(op.Value), Key2Str(op.Key), op.ClientId)
-		}
-	}
-	timer.Stop()
-
-	kv.mu.Lock()
-	kv.DeleteProcessedOpCh(index)
-	kv.mu.Unlock()
-
-	return err, value
+	curConfig        shardctrler.Config
+	prevConfig       shardctrler.Config
+	inShards         map[int]int //	shard -> from GID
+	outShards        map[int]int //	shard -> to GID
+	newConfig        chan bool
+	gid2targetLeader sync.Map
 }
 
 //
@@ -213,6 +63,10 @@ func (kv *ShardKV) snapshotData() []byte {
 	e := labgob.NewEncoder(w)
 	e.Encode(kv.clientId2executedOpId)
 	e.Encode(kv.kvStore)
+	e.Encode(kv.curConfig)
+	e.Encode(kv.prevConfig)
+	e.Encode(kv.inShards)
+	e.Encode(kv.outShards)
 	return w.Bytes()
 }
 
@@ -223,6 +77,10 @@ func (kv *ShardKV) readSnapshot(data []byte) {
 	d := labgob.NewDecoder(r)
 	var clientId2executedOpId map[Int64Id]int
 	var kvStore KVStore
+	var curConfig shardctrler.Config
+	var prevConfig shardctrler.Config
+	var inShards map[int]int
+	var outShards map[int]int
 	if d.Decode(&clientId2executedOpId) != nil ||
 		d.Decode(&kvStore) != nil {
 		errorMsg := fmt.Sprintf("[%v] Decode error\n", basicInfo)
@@ -230,6 +88,10 @@ func (kv *ShardKV) readSnapshot(data []byte) {
 	} else {
 		kv.clientId2executedOpId = clientId2executedOpId
 		kv.kvStore = kvStore
+		kv.curConfig = curConfig
+		kv.prevConfig = prevConfig
+		kv.inShards = inShards
+		kv.outShards = outShards
 	}
 }
 
@@ -240,49 +102,38 @@ func (kv *ShardKV) processor() {
 	for kv.killed() == false {
 		m := <-kv.applyCh
 		if m.SnapshotValid {
-			kv.mu.Lock()
 			kv.DPrintf("[%v] Receive the snapshot to be processed | index: %v | lastProcessed: %v | term: %v\n",
 				basicInfo, m.SnapshotIndex, lastProcessed, m.SnapshotTerm)
 
+			kv.mu.Lock()
 			if kv.rf.CondInstallSnapshot(m.SnapshotTerm, m.SnapshotIndex, m.Snapshot) {
 				kv.readSnapshot(m.Snapshot)
 				lastProcessed = m.SnapshotIndex
 			}
 			kv.mu.Unlock()
 		} else if m.CommandValid && m.CommandIndex > lastProcessed {
-			kv.mu.Lock()
-			op := m.Command.(Op)
-			kv.DPrintf("[%v] Receive the op to be processed \"%v\" | index: %v | lastProcessed: %v\n",
-				basicInfo, op, m.CommandIndex, lastProcessed)
-
-			oriExecutedOpId, ok := kv.clientId2executedOpId[op.ClientId]
-			if !ok {
-				kv.DPrintf("[%v] Haven't executed any ops of C%v\n",
-					basicInfo, op.ClientId)
-			} else {
-				kv.DPrintf("[%v] The max executed op.Id of C%v is %v\n",
-					basicInfo, op.ClientId, oriExecutedOpId)
+			switch m.Command.(type) {
+			case Op:
+				op := m.Command.(Op)
+				kv.DPrintf("[%v] Receive the op to be processed %v | index: %v | lastProcessed: %v\n",
+					basicInfo, &op, m.CommandIndex, lastProcessed)
+				kv.processOpCommand(&op, m.CommandIndex)
+			case shardctrler.Config:
+				newConfig := m.Command.(shardctrler.Config)
+				kv.DPrintf("[%v] Receive the config to be processed %v | index: %v | lastProcessed: %v\n",
+					basicInfo, &newConfig, m.CommandIndex, lastProcessed)
+				kv.processConfigCommand(&newConfig, m.CommandIndex)
+			case MergeReq:
+				mReq := m.Command.(MergeReq)
+				kv.DPrintf("[%v] Receive the merge request to be processed %v | index: %v | lastProcessed: %v\n",
+					basicInfo, &mReq, m.CommandIndex, lastProcessed)
+				kv.processMergeReqCommand(&mReq, m.CommandIndex)
+			case DeleteReq:
+				dReq := m.Command.(DeleteReq)
+				kv.DPrintf("[%v] Receive the delete request to be processed %v | index: %v | lastProcessed: %v\n",
+					basicInfo, &dReq, m.CommandIndex, lastProcessed)
+				kv.processDeleteReqCommand(&dReq, m.CommandIndex)
 			}
-
-			if op.Type == GetV {
-				op.Value = kv.kvStore.Get(op.Key)
-				kv.clientId2executedOpId[op.ClientId] = op.Id
-				kv.DPrintf("[%v] Execute the op \"%v\"\n",
-					basicInfo, op)
-			} else if op.Type == PutKV || op.Type == AppendKV {
-				opBeforeExecuted := kv.OpExecuted(op.ClientId, op.Id)
-				if !opBeforeExecuted {
-					kv.kvStore.PutAppend(op.Key, op.Value, op.Type)
-					kv.clientId2executedOpId[op.ClientId] = op.Id
-					kv.DPrintf("[%v] Execute the op \"%v\" | stored value: %v\n",
-						basicInfo, op, kv.kvStore.Get(op.Key))
-				} else {
-					kv.DPrintf("[%v] Refuse to execute the duplicated op \"%v\" | stored value: %v\n",
-						basicInfo, op, kv.kvStore.Get(op.Key))
-				}
-			}
-			ch := kv.GetProcessedOpCh(m.CommandIndex, false)
-			kv.mu.Unlock()
 
 			raftStateSize := kv.rf.GetPersister().RaftStateSize()
 			if kv.maxraftstate > 0 && raftStateSize > kv.maxraftstate {
@@ -294,14 +145,383 @@ func (kv *ShardKV) processor() {
 				kv.rf.Snapshot(m.CommandIndex, snapshotData)
 			}
 
-			if ch != nil {
-				ch <- op
-				kv.DPrintf("[%v] After return the processed op \"%v\"\n",
-					basicInfo, op)
-			}
 			lastProcessed = m.CommandIndex
 		}
 	}
+}
+
+func (kv *ShardKV) processOpCommand(op *Op, index int) {
+	basicInfo := kv.BasicInfo("processOpCommand")
+
+	opResult := ProcessResult{
+		Type:     OpCmd,
+		Id:       op.Id,
+		ClientId: op.ClientId,
+		Value:    op.Value,
+		Err:      OK,
+	}
+
+	kv.mu.Lock()
+	defer func() {
+		kv.mu.Unlock()
+		kv.NotifyProcessedResultCh(index, &opResult)
+		kv.DPrintf("[%v] Finish processing the op %v\n",
+			basicInfo, op)
+	}()
+
+	oriExecutedOpId, ok := kv.clientId2executedOpId[op.ClientId]
+	if !ok {
+		kv.DPrintf("[%v] Haven't executed any ops of C%v\n",
+			basicInfo, op.ClientId)
+	} else {
+		kv.DPrintf("[%v] The max executed op.Id of C%v is %v\n",
+			basicInfo, op.ClientId, oriExecutedOpId)
+	}
+
+	shard := key2shard(op.Key)
+	shardGID := kv.curConfig.Shards[shard]
+	serverGID := kv.gid
+	if shardGID != serverGID {
+		kv.DPrintf("[%v] Refuse to execute the op %v (don't match GID : %v(shard %v) VS %v(server)) | "+
+			"curConfig.Num: %v\n",
+			basicInfo, op, shardGID, shard, serverGID, kv.curConfig.Num)
+		opResult.Err = ErrWrongGroup
+		return
+	}
+
+	if _, inShardsOk := kv.inShards[shard]; inShardsOk {
+		kv.DPrintf("[%v] Refuse to execute the op %v (shard %v not arrived) | curConfig.Num: %v\n",
+			basicInfo, op, shard, kv.curConfig.Num)
+		opResult.Err = ErrNotArrivedShard
+		return
+	}
+
+	if op.Type == GetV {
+		opResult.Value = kv.kvStore.Get(op.Key)
+		kv.clientId2executedOpId[op.ClientId] = op.Id
+		kv.DPrintf("[%v] Execute the op %v\n",
+			basicInfo, op)
+	} else if op.Type == PutKV || op.Type == AppendKV {
+		opBeforeExecuted := kv.OpExecuted(op.ClientId, op.Id)
+		if !opBeforeExecuted {
+			kv.kvStore.PutAppend(op.Key, op.Value, op.Type)
+			kv.clientId2executedOpId[op.ClientId] = op.Id
+			kv.DPrintf("[%v] Execute the op %v | stored value: %v\n",
+				basicInfo, op, kv.kvStore.Get(op.Key))
+		} else {
+			kv.DPrintf("[%v] Refuse to execute the duplicated op %v | stored value: %v\n",
+				basicInfo, op, kv.kvStore.Get(op.Key))
+		}
+	}
+}
+
+func (kv *ShardKV) processConfigCommand(newConfig *shardctrler.Config, index int) {
+	basicInfo := kv.BasicInfo("processConfigCommand")
+
+	kv.mu.Lock()
+	defer func() {
+		kv.mu.Unlock()
+		if len(kv.newConfig) != cap(kv.newConfig) {
+			kv.newConfig <- true
+		}
+	}()
+
+	if newConfig.Num <= kv.curConfig.Num {
+		kv.DPrintf("[%v] Refuse to install the config %v (%v(newConfig.Num) <= %v(curConfig.Num))\n",
+			basicInfo, newConfig, newConfig.Num, kv.curConfig.Num)
+		return
+	}
+
+	//	install newConfig
+	kv.prevConfig = kv.curConfig
+	kv.curConfig = *newConfig
+
+	if kv.curConfig.Num == 1 {
+		kv.ValidateGroupShardDatas()
+	} else {
+		kv.UpdateInAndOutShards()
+	}
+	for shard := 0; shard < shardctrler.NShards; shard++ {
+		if _, inShardsOk := kv.inShards[shard]; inShardsOk {
+			continue
+		}
+		if _, outShardsOk := kv.outShards[shard]; outShardsOk {
+			continue
+		}
+		kv.kvStore.UpdateShardConfigNum(shard, kv.curConfig.Num)
+	}
+
+	kv.DPrintf("[%v] Finish to install the config %v | inShards: %v | outShards: %v\n",
+		basicInfo, newConfig, kv.inShards, kv.outShards)
+}
+
+func (kv *ShardKV) processMergeReqCommand(mReq *MergeReq, index int) {
+	basicInfo := kv.BasicInfo("processMergeReqCommand")
+
+	mReqResult := ProcessResult{
+		Type:      MergeReqCmd,
+		GID:       mReq.GID,
+		ConfigNum: mReq.ConfigNum,
+		Shard:     mReq.Shard,
+		Err:       OK,
+	}
+
+	kv.mu.Lock()
+	defer func() {
+		kv.mu.Unlock()
+		kv.NotifyProcessedResultCh(index, &mReqResult)
+		kv.DPrintf("[%v] Finish processing the merge request %v\n",
+			basicInfo, mReq)
+	}()
+
+	if mReq.ConfigNum > kv.curConfig.Num {
+		kv.DPrintf("[%v] Refuse to merge shard %v from G%v (shard ahead: %v(mReq.ConfigNum) > %v(curConfig.Num))\n",
+			basicInfo, mReq.Shard, mReq.GID, mReq.ConfigNum, kv.curConfig.Num)
+		mReqResult.Err = ErrAheadShard
+		return
+	}
+
+	if mReq.ConfigNum < kv.curConfig.Num {
+		kv.DPrintf("[%v] Refuse to merge shard %v from G%v (shard outdated: %v(mReq.ConfigNum) < %v(curConfig.Num))\n",
+			basicInfo, mReq.Shard, mReq.GID, mReq.ConfigNum, kv.curConfig.Num)
+		mReqResult.Err = ErrOutdatedShard
+		return
+	}
+
+	fromGID, inShardsOk := kv.inShards[mReq.Shard]
+	if !inShardsOk {
+		kv.DPrintf("[%v] Refuse to merge shard %v from G%v (shard not in inShards of CF%v) | inShards: %v\n",
+			basicInfo, mReq.Shard, mReq.GID, kv.curConfig.Num, kv.inShards)
+		mReqResult.Err = ErrRepeatedShard
+		return
+	}
+	if mReq.GID != fromGID {
+		errorMsg := fmt.Sprintf("[%v] shard %v(CF%v): mReq.GID %v != fromGID %v\n",
+			basicInfo, mReq.Shard, kv.curConfig.Num, mReq.GID, fromGID)
+		panic(errorMsg)
+	}
+
+	kv.kvStore.MergeShardData(mReq.Shard, mReq.ShardData)
+	kv.kvStore.UpdateShardConfigNum(mReq.Shard, mReq.ConfigNum)
+
+	for clientId, executedOpId := range mReq.ClientId2ExecutedOpId {
+		if oriExecutedOpId, ok := kv.clientId2executedOpId[clientId]; !ok || oriExecutedOpId < executedOpId {
+			kv.clientId2executedOpId[clientId] = executedOpId
+		}
+	}
+
+	delete(kv.inShards, mReq.Shard)
+}
+
+func (kv *ShardKV) processDeleteReqCommand(dReq *DeleteReq, index int) {
+	basicInfo := kv.BasicInfo("processDeleteReq")
+
+	dReqResult := ProcessResult{
+		Type:      DeleteReqCmd,
+		ConfigNum: dReq.ConfigNum,
+		Shard:     dReq.Shard,
+		Err:       OK,
+	}
+
+	kv.mu.Lock()
+	defer func() {
+		kv.mu.Unlock()
+		kv.NotifyProcessedResultCh(index, &dReqResult)
+		kv.DPrintf("[%v] Finish processing the delete request %v\n",
+			basicInfo, dReq)
+	}()
+
+	if dReq.ConfigNum > kv.curConfig.Num {
+		errorMsg := fmt.Sprintf("[%v] shard %v ahead: %v(dReq.ConfigNum) > %v(curConfig.Num)\n",
+			basicInfo, dReq.Shard, dReq.ConfigNum, kv.curConfig.Num)
+		panic(errorMsg)
+	}
+
+	if dReq.ConfigNum < kv.curConfig.Num {
+		kv.DPrintf("[%v] Refuse to delete shard %v (shard outdated: %v(dReq.ConfigNum) < %v(curConfig.Num))\n",
+			basicInfo, dReq.Shard, dReq.ConfigNum, kv.curConfig.Num)
+		dReqResult.Err = ErrOutdatedShard
+		return
+	}
+
+	_, outShardsOk := kv.outShards[dReq.Shard]
+	if !outShardsOk {
+		kv.DPrintf("[%v] Refuse to delete shard %v (shard not in outShards of CF%v) | outShards: %v\n",
+			basicInfo, dReq.Shard, kv.curConfig.Num, kv.outShards)
+		dReqResult.Err = ErrRepeatedShard
+		return
+	}
+
+	kv.kvStore.InvalidateShardData(dReq.Shard)
+	kv.kvStore.UpdateShardConfigNum(dReq.Shard, dReq.ConfigNum)
+
+	delete(kv.outShards, dReq.Shard)
+}
+
+func (kv *ShardKV) configPoller() {
+	basicInfo := kv.BasicInfo("configPoller")
+
+	for kv.killed() == false {
+		time.Sleep(ConfigPollPeriod * time.Millisecond)
+
+		if _, isLeader := kv.rf.GetState(); !isLeader {
+			continue
+		}
+
+		kv.mu.Lock()
+		curConfigNum := kv.curConfig.Num
+		kv.mu.Unlock()
+
+		pollConfigNum := curConfigNum + 1
+		kv.DPrintf("[%v] Prepare to poll CF%v\n",
+			basicInfo, pollConfigNum)
+		newConfig := kv.mck.Query(pollConfigNum)
+		if newConfig.Num != pollConfigNum {
+			kv.DPrintf("[%v] Fail to poll CF%v | newConfig.Num: %v\n",
+				basicInfo, pollConfigNum, newConfig.Num)
+			continue
+		}
+
+		kv.mu.Lock()
+		if len(kv.inShards) > 0 {
+			kv.DPrintf("[%v] Refuse to start CF%v (inShards not empty)\n",
+				basicInfo, newConfig.Num)
+			kv.mu.Unlock()
+			continue
+		}
+
+		if newConfig.Num <= kv.curConfig.Num {
+			kv.DPrintf("[%v] Refuse to start CF%v (config installed)\n",
+				basicInfo, newConfig.Num)
+			kv.mu.Unlock()
+			continue
+		}
+		kv.mu.Unlock()
+
+		kv.DPrintf("[%v] Prepare to start CF%v\n",
+			basicInfo, newConfig.Num)
+		kv.rf.Start(newConfig)
+	}
+}
+
+func (kv *ShardKV) shardMigrant() {
+	basicInfo := kv.BasicInfo("shardMigrant")
+
+	for kv.killed() == false {
+		timer := time.NewTimer(ShardMigratePeriod * time.Millisecond)
+		select {
+		case <-kv.newConfig:
+		case <-timer.C:
+		}
+		timer.Stop()
+
+		if _, isLeader := kv.rf.GetState(); !isLeader {
+			continue
+		}
+
+		kv.mu.Lock()
+		if len(kv.outShards) == 0 {
+			kv.mu.Unlock()
+			continue
+		}
+
+		kv.DPrintf("[%v] Prepare to migrate shards | curConfig.Num: %v | outShards: %v\n",
+			basicInfo, kv.curConfig.Num, kv.outShards)
+		for shard, toGID := range kv.outShards {
+			kv.migrateShard(shard, toGID)
+		}
+		kv.mu.Unlock()
+	}
+}
+
+func (kv *ShardKV) migrateShard(shard int, toGID int) {
+	basicInfo := kv.BasicInfo("migrateShard")
+
+	clientId2executedOpIdCopy := make(map[Int64Id]int)
+	for clientId, executedOpId := range kv.clientId2executedOpId {
+		clientId2executedOpIdCopy[clientId] = executedOpId
+	}
+
+	shardDataCopy := make(ShardData)
+	for key, value := range kv.kvStore.ShardDatas[shard] {
+		shardDataCopy[key] = value
+	}
+
+	mArgs := MergeShardDatasArgs{
+		GID:                   kv.gid,
+		ConfigNum:             kv.curConfig.Num,
+		Shard:                 shard,
+		ShardData:             shardDataCopy,
+		ClientId2ExecutedOpId: clientId2executedOpIdCopy,
+	}
+
+	servers := kv.curConfig.Groups[toGID]
+	go func(servers []string, args *MergeShardDatasArgs) {
+		flag := false
+		ok := false
+		targetLeader := kv.getTargetLeader(toGID, len(servers))
+		startTime := time.Now()
+		for !ok {
+			if time.Since(startTime) > ShardMigrateTimeout*time.Millisecond {
+				break
+			}
+
+			srv := kv.make_end(servers[targetLeader])
+			reply := &MergeShardDatasReply{}
+			kv.DPrintf("[%v] Send MergeShardDatas RPC to S%v-%v | gid: %v | configNum: %v | shard: %v\n",
+				basicInfo, toGID, targetLeader, args.GID, args.ConfigNum, args.Shard)
+
+			ok = srv.Call("ShardKV.MergeShardDatas", args, reply)
+
+			if ok {
+				kv.DPrintf("[%v] Receive MergeShardDatas ACK from S%v-%v | err: %v | "+
+					"gid: %v | configNum: %v | shard: %v\n",
+					basicInfo, toGID, targetLeader, reply.Err, args.GID, args.ConfigNum, args.Shard)
+				switch reply.Err {
+				case OK:
+					flag = true
+					break
+				case ErrWrongLeader:
+					ok = false
+					targetLeader = kv.UpdateTargetLeader(toGID, len(servers))
+				case ErrAheadShard:
+					ok = false
+				case ErrOutdatedShard:
+					flag = true
+					break
+				case ErrRepeatedShard:
+					flag = true
+					break
+				case ErrOvertime:
+					ok = false
+					targetLeader = kv.UpdateTargetLeader(toGID, len(servers))
+				}
+			} else {
+				kv.DPrintf("[%v] Fail to receive MergeShardDatas ACK from S%v-%v | "+
+					"gid: %v | configNum: %v | shard: %v\n",
+					basicInfo, toGID, targetLeader, args.GID, args.ConfigNum, args.Shard)
+				targetLeader = kv.UpdateTargetLeader(toGID, len(servers))
+			}
+		}
+
+		if !flag {
+			return
+		}
+
+		dArgs := DeleteShardDatasArgs{
+			ConfigNum: mArgs.ConfigNum,
+			Shard:     mArgs.Shard,
+		}
+		dReply := DeleteShardDatasReply{}
+		kv.DeleteShardDatas(&dArgs, &dReply)
+		if dReply.Err != OK {
+			kv.DPrintf("[%v] Finish to delete shard %v on S%v-%v\n",
+				basicInfo, dArgs.Shard, kv.gid, kv.me)
+		} else {
+			kv.DPrintf("[%v] Fail to delete shard %v on S%v-%v | err: %v\n",
+				basicInfo, dArgs.Shard, kv.gid, kv.me, dReply.Err)
+		}
+	}(servers, &mArgs)
 }
 
 //
@@ -336,6 +556,9 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
 	labgob.Register(Op{})
+	labgob.Register(shardctrler.Config{})
+	labgob.Register(MergeReq{})
+	labgob.Register(DeleteReq{})
 
 	kv := new(ShardKV)
 	kv.me = me
@@ -351,12 +574,22 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	// Use something like this to talk to the shardctrler:
 	kv.mck = shardctrler.MakeClerk(kv.ctrlers)
 	kv.clientId2executedOpId = make(map[Int64Id]int)
-	kv.index2processedOpCh = make(map[int]chan Op)
-	kv.kvStore.KVMap = make(map[string]string)
+	kv.index2processedResultCh = make(map[int]chan ProcessResult)
+	kv.kvStore.Init()
+
+	kv.curConfig.Groups = make(map[int][]string)
+	kv.prevConfig.Groups = make(map[int][]string)
+	kv.inShards = make(map[int]int)
+	kv.outShards = make(map[int]int)
+	kv.newConfig = make(chan bool, 1)
+
+	kv.mck.SetHostInfo(fmt.Sprintf("S%v-%v", kv.gid, kv.me))
 	kv.DPrintf("[%v] Start new shard KV server | maxraftstate: %v | mck.clientId: %v\n",
 		kv.BasicInfo(""), kv.maxraftstate, kv.mck.GetClientId())
 
 	go kv.processor()
+	go kv.configPoller()
+	go kv.shardMigrant()
 
 	return kv
 }

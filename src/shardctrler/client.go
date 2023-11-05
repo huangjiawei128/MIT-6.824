@@ -27,6 +27,8 @@ type Clerk struct {
 	clientId     Int64Id
 	nextOpId     int
 	targetLeader int
+
+	hostInfo string
 }
 
 func nrand() int64 {
@@ -74,6 +76,9 @@ func (ck *Clerk) Join(servers map[int][]string) {
 			case ErrWrongLeader:
 				ok = false
 				ck.UpdateTargetLeader()
+			case ErrOvertime:
+				ok = false
+				ck.UpdateTargetLeader()
 			}
 		} else {
 			ck.DPrintf("[%v(%v)] Fail to receive Join ACK from S%v | servers: %v\n",
@@ -107,6 +112,9 @@ func (ck *Clerk) Leave(gids []int) {
 			case OK:
 				break
 			case ErrWrongLeader:
+				ok = false
+				ck.UpdateTargetLeader()
+			case ErrOvertime:
 				ok = false
 				ck.UpdateTargetLeader()
 			}
@@ -145,6 +153,9 @@ func (ck *Clerk) Move(shard int, gid int) {
 			case ErrWrongLeader:
 				ok = false
 				ck.UpdateTargetLeader()
+			case ErrOvertime:
+				ok = false
+				ck.UpdateTargetLeader()
 			}
 		} else {
 			ck.DPrintf("[%v(%v)] Fail to receive Move ACK from S%v | shard: %v | gid: %v\n",
@@ -180,6 +191,9 @@ func (ck *Clerk) Query(num int) Config {
 				ret = reply.Config
 				break
 			case ErrWrongLeader:
+				ok = false
+				ck.UpdateTargetLeader()
+			case ErrOvertime:
 				ok = false
 				ck.UpdateTargetLeader()
 			}

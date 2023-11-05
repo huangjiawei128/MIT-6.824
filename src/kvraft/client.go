@@ -85,6 +85,9 @@ func (ck *Clerk) Get(key string) string {
 			case ErrWrongLeader:
 				ok = false
 				ck.UpdateTargetLeader()
+			case ErrOvertime:
+				ok = false
+				ck.UpdateTargetLeader()
 			}
 		} else {
 			ck.DPrintf("[%v(%v)] Fail to receive Get ACK from S%v | key: %v\n",
@@ -140,6 +143,9 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 			case OK:
 				break
 			case ErrWrongLeader:
+				ok = false
+				ck.UpdateTargetLeader()
+			case ErrOvertime:
 				ok = false
 				ck.UpdateTargetLeader()
 			}

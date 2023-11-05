@@ -9,9 +9,9 @@ import (
 )
 
 // Debugging
-const Debug = true
+const Debug = false
 
-const ApplyDebug = true
+const ApplyDebug = false
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug {
