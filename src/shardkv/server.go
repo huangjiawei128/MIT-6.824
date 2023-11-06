@@ -82,7 +82,11 @@ func (kv *ShardKV) readSnapshot(data []byte) {
 	var inShards map[int]int
 	var outShards map[int]int
 	if d.Decode(&clientId2executedOpId) != nil ||
-		d.Decode(&kvStore) != nil {
+		d.Decode(&kvStore) != nil ||
+		d.Decode(&curConfig) != nil ||
+		d.Decode(&prevConfig) != nil ||
+		d.Decode(&inShards) != nil ||
+		d.Decode(&outShards) != nil {
 		errorMsg := fmt.Sprintf("[%v] Decode error\n", basicInfo)
 		panic(errorMsg)
 	} else {
@@ -102,44 +106,48 @@ func (kv *ShardKV) processor() {
 	for kv.killed() == false {
 		m := <-kv.applyCh
 		if m.SnapshotValid {
-			kv.DPrintf("[%v] Receive the snapshot to be processed | index: %v | lastProcessed: %v | term: %v\n",
-				basicInfo, m.SnapshotIndex, lastProcessed, m.SnapshotTerm)
+			kv.DPrintf("[%v] Receive the snapshot at I%v to be processed | term: %v | lastProcessed: %v\n",
+				basicInfo, m.SnapshotIndex, m.SnapshotTerm, lastProcessed)
 
 			kv.mu.Lock()
 			if kv.rf.CondInstallSnapshot(m.SnapshotTerm, m.SnapshotIndex, m.Snapshot) {
 				kv.readSnapshot(m.Snapshot)
 				lastProcessed = m.SnapshotIndex
+				kv.DPrintf("[%v] Finish to read the snapshot at I%v | "+
+					"curConfig.Num: %v | inShards: %v | outShards: %v\n",
+					basicInfo, m.SnapshotIndex, kv.curConfig.Num, kv.inShards, kv.outShards)
 			}
 			kv.mu.Unlock()
 		} else if m.CommandValid && m.CommandIndex > lastProcessed {
 			switch m.Command.(type) {
 			case Op:
 				op := m.Command.(Op)
-				kv.DPrintf("[%v] Receive the op to be processed %v | index: %v | lastProcessed: %v\n",
-					basicInfo, &op, m.CommandIndex, lastProcessed)
+				kv.DPrintf("[%v] Receive the op at I%v to be processed %v | lastProcessed: %v\n",
+					basicInfo, m.CommandIndex, &op, lastProcessed)
 				kv.processOpCommand(&op, m.CommandIndex)
 			case shardctrler.Config:
 				newConfig := m.Command.(shardctrler.Config)
-				kv.DPrintf("[%v] Receive the config to be processed %v | index: %v | lastProcessed: %v\n",
-					basicInfo, &newConfig, m.CommandIndex, lastProcessed)
+				kv.DPrintf("[%v] Receive the config at I%v to be processed %v | lastProcessed: %v\n",
+					basicInfo, m.CommandIndex, &newConfig, lastProcessed)
 				kv.processConfigCommand(&newConfig, m.CommandIndex)
 			case MergeReq:
 				mReq := m.Command.(MergeReq)
-				kv.DPrintf("[%v] Receive the merge request to be processed %v | index: %v | lastProcessed: %v\n",
-					basicInfo, &mReq, m.CommandIndex, lastProcessed)
+				kv.DPrintf("[%v] Receive the merge request at I%v to be processed %v | lastProcessed: %v\n",
+					basicInfo, m.CommandIndex, &mReq, lastProcessed)
 				kv.processMergeReqCommand(&mReq, m.CommandIndex)
 			case DeleteReq:
 				dReq := m.Command.(DeleteReq)
-				kv.DPrintf("[%v] Receive the delete request to be processed %v | index: %v | lastProcessed: %v\n",
-					basicInfo, &dReq, m.CommandIndex, lastProcessed)
+				kv.DPrintf("[%v] Receive the delete request at I%v to be processed %v | lastProcessed: %v\n",
+					basicInfo, m.CommandIndex, &dReq, lastProcessed)
 				kv.processDeleteReqCommand(&dReq, m.CommandIndex)
 			}
 
 			raftStateSize := kv.rf.GetPersister().RaftStateSize()
 			if kv.maxraftstate > 0 && raftStateSize > kv.maxraftstate {
 				kv.mu.Lock()
-				kv.DPrintf("[%v] Prepare snapshot data | index: %v | raftStateSize: %v > maxraftstate: %v > 0\n",
-					basicInfo, m.CommandIndex, raftStateSize, kv.maxraftstate)
+				kv.DPrintf("[%v] Prepare to snapshot data at I%v | raftStateSize: %v > maxraftstate: %v > 0 | "+
+					"curConfig.Num: %v | inShards: %v | outShards: %v\n",
+					basicInfo, m.CommandIndex, raftStateSize, kv.maxraftstate, kv.curConfig.Num, kv.inShards, kv.outShards)
 				snapshotData := kv.snapshotData()
 				kv.mu.Unlock()
 				kv.rf.Snapshot(m.CommandIndex, snapshotData)
@@ -237,7 +245,7 @@ func (kv *ShardKV) processConfigCommand(newConfig *shardctrler.Config, index int
 	kv.curConfig = *newConfig
 
 	if kv.curConfig.Num == 1 {
-		kv.ValidateGroupShardDatas()
+		kv.ValidateShardsInGroup()
 	} else {
 		kv.UpdateInAndOutShards()
 	}
@@ -311,6 +319,8 @@ func (kv *ShardKV) processMergeReqCommand(mReq *MergeReq, index int) {
 	}
 
 	delete(kv.inShards, mReq.Shard)
+	kv.DPrintf("[%v] Finish to merge shard %v from G%v | curConfig: %v | inShards: %v | validShards: %v\n",
+		basicInfo, mReq.Shard, mReq.GID, kv.curConfig, kv.inShards, kv.kvStore.GetValidShards())
 }
 
 func (kv *ShardKV) processDeleteReqCommand(dReq *DeleteReq, index int) {
@@ -352,10 +362,12 @@ func (kv *ShardKV) processDeleteReqCommand(dReq *DeleteReq, index int) {
 		return
 	}
 
-	kv.kvStore.InvalidateShardData(dReq.Shard)
+	kv.kvStore.InvalidateShard(dReq.Shard)
 	kv.kvStore.UpdateShardConfigNum(dReq.Shard, dReq.ConfigNum)
 
 	delete(kv.outShards, dReq.Shard)
+	kv.DPrintf("[%v] Finish to delete shard %v | curConfig: %v | outShards: %v | validShards: %v\n",
+		basicInfo, dReq.Shard, kv.curConfig, kv.outShards, kv.kvStore.GetValidShards())
 }
 
 func (kv *ShardKV) configPoller() {

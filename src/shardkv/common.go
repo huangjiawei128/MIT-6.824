@@ -253,18 +253,28 @@ func (kvStore *KVStore) PutAppend(key string, value string, opType OpType) {
 	}
 }
 
-func (kvStore *KVStore) ValidateShardData(shard int) {
+func (kvStore *KVStore) ValidateShard(shard int) {
 	if shardData := kvStore.ShardDatas[shard]; shardData == nil {
 		kvStore.ShardDatas[shard] = make(ShardData)
 	}
 }
 
-func (kvStore *KVStore) InvalidateShardData(shard int) {
+func (kvStore *KVStore) InvalidateShard(shard int) {
 	kvStore.ShardDatas[shard] = nil
 }
 
-func (kvStore *KVStore) ShardDataValid(shard int) bool {
+func (kvStore *KVStore) ShardValid(shard int) bool {
 	return kvStore.ShardDatas[shard] != nil
+}
+
+func (kvStore *KVStore) GetValidShards() []int {
+	ret := make([]int, 0)
+	for shard := 0; shard < shardctrler.NShards; shard++ {
+		if kvStore.ShardValid(shard) {
+			ret = append(ret, shard)
+		}
+	}
+	return ret
 }
 
 func (kvStore *KVStore) MergeShardData(shard int, shardData ShardData) {
@@ -335,10 +345,10 @@ func (kv *ShardKV) OpExecuted(clientId Int64Id, opId int) bool {
 	return opId <= executedOpId
 }
 
-func (kv *ShardKV) ValidateGroupShardDatas() {
+func (kv *ShardKV) ValidateShardsInGroup() {
 	for shard := 0; shard < shardctrler.NShards; shard++ {
 		if kv.curConfig.Shards[shard] == kv.gid {
-			kv.kvStore.ValidateShardData(shard)
+			kv.kvStore.ValidateShard(shard)
 		}
 	}
 }

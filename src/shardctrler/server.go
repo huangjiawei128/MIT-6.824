@@ -56,8 +56,8 @@ func (sc *ShardCtrler) processor() {
 		m := <-sc.applyCh
 		if m.CommandValid && m.CommandIndex > lastProcessed {
 			op := m.Command.(Op)
-			sc.DPrintf("[%v] Receive the op to be processed %v | index: %v | lastProcessed: %v\n",
-				basicInfo, &op, m.CommandIndex, lastProcessed)
+			sc.DPrintf("[%v] Receive the op at I%v to be processed %v | lastProcessed: %v\n",
+				basicInfo, m.CommandIndex, &op, lastProcessed)
 			sc.processOpCommand(&op, m.CommandIndex)
 			lastProcessed = m.CommandIndex
 		}

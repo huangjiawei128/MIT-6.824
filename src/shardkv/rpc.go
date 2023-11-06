@@ -69,9 +69,9 @@ func (kv *ShardKV) prepareForDeleteReqProcess(dReq DeleteReq) (Err, int) {
 	}
 
 	if dReq.ConfigNum == kv.curConfig.Num {
-		if _, inShardsOk := kv.inShards[dReq.Shard]; !inShardsOk {
+		if _, outShardsOk := kv.outShards[dReq.Shard]; !outShardsOk {
 			kv.DPrintf("[%v(CF%v)] Refuse to delete shard %v "+
-				"(shard not in inShards of CF%v)\n",
+				"(shard not in outShards of CF%v)\n",
 				basicInfo, dReq.ConfigNum, dReq.Shard, kv.curConfig.Num)
 			kv.mu.Unlock()
 			return ErrRepeatedShard, -1

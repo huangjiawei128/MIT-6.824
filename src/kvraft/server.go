@@ -81,8 +81,8 @@ func (kv *KVServer) processor() {
 	for kv.killed() == false {
 		m := <-kv.applyCh
 		if m.SnapshotValid {
-			kv.DPrintf("[%v] Receive the snapshot to be processed | index: %v | lastProcessed: %v | term: %v\n",
-				basicInfo, m.SnapshotIndex, lastProcessed, m.SnapshotTerm)
+			kv.DPrintf("[%v] Receive the snapshot at I%v to be processed | term: %v | lastProcessed: %v\n",
+				basicInfo, m.SnapshotIndex, m.SnapshotTerm, lastProcessed)
 
 			kv.mu.Lock()
 			if kv.rf.CondInstallSnapshot(m.SnapshotTerm, m.SnapshotIndex, m.Snapshot) {
@@ -92,15 +92,15 @@ func (kv *KVServer) processor() {
 			kv.mu.Unlock()
 		} else if m.CommandValid && m.CommandIndex > lastProcessed {
 			op := m.Command.(Op)
-			kv.DPrintf("[%v] Receive the op to be processed %v | index: %v | lastProcessed: %v\n",
-				basicInfo, &op, m.CommandIndex, lastProcessed)
+			kv.DPrintf("[%v] Receive the op at I%v to be processed %v | lastProcessed: %v\n",
+				basicInfo, m.CommandIndex, &op, lastProcessed)
 			kv.processOpCommand(&op, m.CommandIndex)
 
 			raftStateSize := kv.rf.GetPersister().RaftStateSize()
 			if kv.maxraftstate > 0 && raftStateSize > kv.maxraftstate {
-				kv.DPrintf("[%v] Prepare snapshot data | index: %v | raftStateSize: %v > maxraftstate: %v > 0\n",
-					basicInfo, m.CommandIndex, raftStateSize, kv.maxraftstate)
 				kv.mu.Lock()
+				kv.DPrintf("[%v] Prepare to snapshot data at I%v | raftStateSize: %v > maxraftstate: %v > 0\n",
+					basicInfo, m.CommandIndex, raftStateSize, kv.maxraftstate)
 				snapshotData := kv.snapshotData()
 				kv.mu.Unlock()
 				kv.rf.Snapshot(m.CommandIndex, snapshotData)
