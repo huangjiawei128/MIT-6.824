@@ -100,12 +100,14 @@ def print_results(results: Dict[str, Dict[str, StatsMeter]], timing=False):
     print(table)
 
 
-def run_test(test: str, race: bool, timing: bool):
+def run_test(test: str, race: bool, timing: bool, timeout: int):
     test_cmd = ["go", "test", f"-run={test}"]
     if race:
         test_cmd.append("-race")
     if timing:
-        test_cmd = ["time"] + cmd
+        test_cmd = ["time"] + test_cmd
+    if timeout > 0:
+        test_cmd.append("-timeout=" + str(timeout) + "s")
     f, path = tempfile.mkstemp()
     start = time.time()
     proc = subprocess.run(test_cmd, stdout=f, stderr=f)
@@ -125,18 +127,19 @@ def last_line(file: str) -> str:
 
 # fmt: off
 def run_tests(
-    tests: List[str],
-    sequential: bool       = typer.Option(False,  '--sequential',      '-s',    help='Run all test of each group in order'),
-    workers: int           = typer.Option(1,      '--workers',         '-p',    help='Number of parallel tasks'),
-    iterations: int        = typer.Option(10,     '--iter',            '-n',    help='Number of iterations to run'),
-    output: Optional[Path] = typer.Option(None,   '--output',          '-o',    help='Output path to use'),
-    verbose: int           = typer.Option(1,      '--verbose',         '-v',    help='Verbosity level', count=True),
-    archive: bool          = typer.Option(False,  '--archive',         '-a',    help='Save all logs intead of only failed ones'),
-    race: bool             = typer.Option(False,  '--race/--no-race',  '-r/-R', help='Run with race checker'),
-    loop: bool             = typer.Option(False,  '--loop',            '-l',    help='Run continuously'),
-    growth: int            = typer.Option(10,     '--growth',          '-g',    help='Growth ratio of iterations when using --loop'),
-    timing: bool           = typer.Option(False,   '--timing',          '-t',    help='Report timing, only works on macOS'),
-    # fmt: on
+        tests: List[str],
+        sequential: bool       = typer.Option(False,  '--sequential',      '-s',    help='Run all test of each group in order'),
+        workers: int           = typer.Option(1,      '--workers',         '-p',    help='Number of parallel tasks'),
+        iterations: int        = typer.Option(10,     '--iter',            '-n',    help='Number of iterations to run'),
+        output: Optional[Path] = typer.Option(None,   '--output',          '-o',    help='Output path to use'),
+        verbose: int           = typer.Option(1,      '--verbose',         '-v',    help='Verbosity level', count=True),
+        archive: bool          = typer.Option(False,  '--archive',         '-a',    help='Save all logs intead of only failed ones'),
+        race: bool             = typer.Option(False,  '--race/--no-race',  '-r/-R', help='Run with race checker'),
+        loop: bool             = typer.Option(False,  '--loop',            '-l',    help='Run continuously'),
+        growth: int            = typer.Option(10,     '--growth',          '-g',    help='Growth ratio of iterations when using --loop'),
+        timing: bool           = typer.Option(False,  '--timing',          '-t',    help='Report timing, only works on macOS'),
+        timeout: int           = typer.Option(-1,     '--timeout',         '-to',   help='Timeout of test'),
+        # fmt: on
 ):
 
     if output is None:
@@ -201,7 +204,7 @@ def run_tests(
                     n = len(futures)
                     if n < workers:
                         for test in itertools.islice(test_instances, workers-n):
-                            futures.append(executor.submit(run_test, test, race, timing))
+                            futures.append(executor.submit(run_test, test, race, timing, timeout))
 
                     done, not_done = wait(futures, return_when=FIRST_COMPLETED)
 

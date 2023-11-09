@@ -64,7 +64,7 @@ func (kv *ShardKV) snapshotData() []byte {
 	e.Encode(kv.clientId2executedOpId)
 	e.Encode(kv.kvStore)
 	e.Encode(kv.curConfig)
-	e.Encode(kv.prevConfig)
+	//	e.Encode(kv.prevConfig)
 	e.Encode(kv.inShards)
 	e.Encode(kv.outShards)
 	return w.Bytes()
@@ -78,13 +78,13 @@ func (kv *ShardKV) readSnapshot(data []byte) {
 	var clientId2executedOpId map[Int64Id]int
 	var kvStore KVStore
 	var curConfig shardctrler.Config
-	var prevConfig shardctrler.Config
+	//	var prevConfig shardctrler.Config
 	var inShards map[int]int
 	var outShards map[int]int
 	if d.Decode(&clientId2executedOpId) != nil ||
 		d.Decode(&kvStore) != nil ||
 		d.Decode(&curConfig) != nil ||
-		d.Decode(&prevConfig) != nil ||
+		//	d.Decode(&prevConfig) != nil ||
 		d.Decode(&inShards) != nil ||
 		d.Decode(&outShards) != nil {
 		errorMsg := fmt.Sprintf("[%v] Decode error\n", basicInfo)
@@ -93,7 +93,7 @@ func (kv *ShardKV) readSnapshot(data []byte) {
 		kv.clientId2executedOpId = clientId2executedOpId
 		kv.kvStore = kvStore
 		kv.curConfig = curConfig
-		kv.prevConfig = prevConfig
+		//	kv.prevConfig = prevConfig
 		kv.inShards = inShards
 		kv.outShards = outShards
 	}
@@ -232,6 +232,22 @@ func (kv *ShardKV) processConfigCommand(newConfig *shardctrler.Config, index int
 		if len(kv.newConfig) != cap(kv.newConfig) {
 			kv.newConfig <- true
 		}
+		//if _, isLeader := kv.rf.GetState(); !isLeader {
+		//	return
+		//}
+
+		//kv.mu.Lock()
+		//if len(kv.outShards) == 0 {
+		//	kv.mu.Unlock()
+		//	return
+		//}
+		//
+		//kv.DPrintf("[%v] Prepare to migrate shards | curConfig.Num: %v | outShards: %v\n",
+		//	basicInfo, kv.curConfig.Num, kv.outShards)
+		//for shard, toGID := range kv.outShards {
+		//	kv.migrateShard(shard, toGID)
+		//}
+		//kv.mu.Unlock()
 	}()
 
 	if newConfig.Num <= kv.curConfig.Num {
@@ -241,13 +257,14 @@ func (kv *ShardKV) processConfigCommand(newConfig *shardctrler.Config, index int
 	}
 
 	//	install newConfig
-	kv.prevConfig = kv.curConfig
+	//	kv.prevConfig = kv.curConfig
+	prevConfig := kv.curConfig
 	kv.curConfig = *newConfig
 
 	if kv.curConfig.Num == 1 {
 		kv.ValidateShardsInGroup()
 	} else {
-		kv.UpdateInAndOutShards()
+		kv.UpdateInAndOutShards(&prevConfig)
 	}
 	for shard := 0; shard < shardctrler.NShards; shard++ {
 		if _, inShardsOk := kv.inShards[shard]; inShardsOk {
@@ -261,6 +278,16 @@ func (kv *ShardKV) processConfigCommand(newConfig *shardctrler.Config, index int
 
 	kv.DPrintf("[%v] Finish to install the config %v | inShards: %v | outShards: %v\n",
 		basicInfo, newConfig, kv.inShards, kv.outShards)
+
+	//if len(kv.outShards) == 0 {
+	//	return
+	//}
+	//
+	//kv.DPrintf("[%v] Prepare to migrate shards | curConfig.Num: %v | outShards: %v\n",
+	//	basicInfo, kv.curConfig.Num, kv.outShards)
+	//for shard, toGID := range kv.outShards {
+	//	kv.migrateShard(shard, toGID)
+	//}
 }
 
 func (kv *ShardKV) processMergeReqCommand(mReq *MergeReq, index int) {
@@ -282,12 +309,12 @@ func (kv *ShardKV) processMergeReqCommand(mReq *MergeReq, index int) {
 			basicInfo, mReq)
 	}()
 
-	if mReq.ConfigNum > kv.curConfig.Num {
-		kv.DPrintf("[%v] Refuse to merge shard %v from G%v (shard ahead: %v(mReq.ConfigNum) > %v(curConfig.Num))\n",
-			basicInfo, mReq.Shard, mReq.GID, mReq.ConfigNum, kv.curConfig.Num)
-		mReqResult.Err = ErrAheadShard
-		return
-	}
+	//if mReq.ConfigNum > kv.curConfig.Num {
+	//	kv.DPrintf("[%v] Refuse to merge shard %v from G%v (shard ahead: %v(mReq.ConfigNum) > %v(curConfig.Num)+1)\n",
+	//		basicInfo, mReq.Shard, mReq.GID, mReq.ConfigNum, kv.curConfig.Num)
+	//	mReqResult.Err = ErrAheadShard
+	//	return
+	//}
 
 	if mReq.ConfigNum < kv.curConfig.Num {
 		kv.DPrintf("[%v] Refuse to merge shard %v from G%v (shard outdated: %v(mReq.ConfigNum) < %v(curConfig.Num))\n",
@@ -296,17 +323,34 @@ func (kv *ShardKV) processMergeReqCommand(mReq *MergeReq, index int) {
 		return
 	}
 
-	fromGID, inShardsOk := kv.inShards[mReq.Shard]
-	if !inShardsOk {
-		kv.DPrintf("[%v] Refuse to merge shard %v from G%v (shard not in inShards of CF%v) | inShards: %v\n",
-			basicInfo, mReq.Shard, mReq.GID, kv.curConfig.Num, kv.inShards)
+	//if mReq.ConfigNum > kv.curConfig.Num {
+	//	shardConfigNum := kv.kvStore.GetShardConfigNum(mReq.Shard)
+	//	if mReq.ConfigNum <= shardConfigNum {
+	//		kv.DPrintf("[%v] Refuse to merge shard %v from G%v (shard ahead: %v(mReq.ConfigNum) <= %v(shardConfigNum))\n",
+	//			basicInfo, mReq.Shard, mReq.GID, mReq.ConfigNum, shardConfigNum)
+	//		mReqResult.Err = ErrRepeatedShard
+	//		return
+	//	}
+	//} else if mReq.ConfigNum == kv.curConfig.Num {
+	//	fromGID, inShardsOk := kv.inShards[mReq.Shard]
+	//	if !inShardsOk {
+	//		kv.DPrintf("[%v] Refuse to merge shard %v from G%v (shard not in inShards of CF%v) | inShards: %v\n",
+	//			basicInfo, mReq.Shard, mReq.GID, kv.curConfig.Num, kv.inShards)
+	//		mReqResult.Err = ErrRepeatedShard
+	//		return
+	//	}
+	//	if mReq.GID != fromGID {
+	//		errorMsg := fmt.Sprintf("[%v] shard %v(CF%v): mReq.GID %v != fromGID %v\n",
+	//			basicInfo, mReq.Shard, kv.curConfig.Num, mReq.GID, fromGID)
+	//		panic(errorMsg)
+	//	}
+	//}
+	shardConfigNum := kv.kvStore.GetShardConfigNum(mReq.Shard)
+	if mReq.ConfigNum <= shardConfigNum {
+		kv.DPrintf("[%v] Refuse to merge shard %v from G%v (shard ahead: %v(mReq.ConfigNum) <= %v(shardConfigNum))\n",
+			basicInfo, mReq.Shard, mReq.GID, mReq.ConfigNum, shardConfigNum)
 		mReqResult.Err = ErrRepeatedShard
 		return
-	}
-	if mReq.GID != fromGID {
-		errorMsg := fmt.Sprintf("[%v] shard %v(CF%v): mReq.GID %v != fromGID %v\n",
-			basicInfo, mReq.Shard, kv.curConfig.Num, mReq.GID, fromGID)
-		panic(errorMsg)
 	}
 
 	kv.kvStore.MergeShardData(mReq.Shard, mReq.ShardData)
@@ -354,10 +398,17 @@ func (kv *ShardKV) processDeleteReqCommand(dReq *DeleteReq, index int) {
 		return
 	}
 
-	_, outShardsOk := kv.outShards[dReq.Shard]
-	if !outShardsOk {
-		kv.DPrintf("[%v] Refuse to delete shard %v (shard not in outShards of CF%v) | outShards: %v\n",
-			basicInfo, dReq.Shard, kv.curConfig.Num, kv.outShards)
+	//_, outShardsOk := kv.outShards[dReq.Shard]
+	//if !outShardsOk {
+	//	kv.DPrintf("[%v] Refuse to delete shard %v (shard not in outShards of CF%v) | outShards: %v\n",
+	//		basicInfo, dReq.Shard, kv.curConfig.Num, kv.outShards)
+	//	dReqResult.Err = ErrRepeatedShard
+	//	return
+	//}
+	shardConfigNum := kv.kvStore.GetShardConfigNum(dReq.Shard)
+	if dReq.ConfigNum <= shardConfigNum {
+		kv.DPrintf("[%v] Refuse to delete shard %v (shard ahead: %v(dReq.ConfigNum) <= %v(shardConfigNum))\n",
+			basicInfo, dReq.Shard, dReq.ConfigNum, shardConfigNum)
 		dReqResult.Err = ErrRepeatedShard
 		return
 	}
@@ -420,15 +471,16 @@ func (kv *ShardKV) shardMigrant() {
 	basicInfo := kv.BasicInfo("shardMigrant")
 
 	for kv.killed() == false {
-		timer := time.NewTimer(ShardMigratePeriod * time.Millisecond)
-		select {
-		case <-kv.newConfig:
-		case <-timer.C:
-		}
-		timer.Stop()
+		//timer := time.NewTimer(ShardMigratePeriod * time.Millisecond)
+		//select {
+		//case <-kv.newConfig:
+		//case <-timer.C:
+		//}
+		//timer.Stop()
+		<-kv.newConfig
 
 		if _, isLeader := kv.rf.GetState(); !isLeader {
-			continue
+			time.Sleep(100 * time.Millisecond)
 		}
 
 		kv.mu.Lock()
@@ -472,11 +524,11 @@ func (kv *ShardKV) migrateShard(shard int, toGID int) {
 		flag := false
 		ok := false
 		targetLeader := kv.getTargetLeader(toGID, len(servers))
-		startTime := time.Now()
+		//startTime := time.Now()
 		for !ok {
-			if time.Since(startTime) > ShardMigrateTimeout*time.Millisecond {
-				break
-			}
+			//if time.Since(startTime) > ShardMigrateTimeout*time.Millisecond {
+			//	break
+			//}
 
 			srv := kv.make_end(servers[targetLeader])
 			reply := &MergeShardDatasReply{}
@@ -590,7 +642,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.kvStore.Init()
 
 	kv.curConfig.Groups = make(map[int][]string)
-	kv.prevConfig.Groups = make(map[int][]string)
+	//	kv.prevConfig.Groups = make(map[int][]string)
 	kv.inShards = make(map[int]int)
 	kv.outShards = make(map[int]int)
 	kv.newConfig = make(chan bool, 1)

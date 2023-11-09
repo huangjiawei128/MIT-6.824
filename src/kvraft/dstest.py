@@ -100,12 +100,14 @@ def print_results(results: Dict[str, Dict[str, StatsMeter]], timing=False):
     print(table)
 
 
-def run_test(test: str, race: bool, timing: bool):
+def run_test(test: str, race: bool, timing: bool, timeout: int):
     test_cmd = ["go", "test", f"-run={test}"]
     if race:
         test_cmd.append("-race")
     if timing:
-        test_cmd = ["time"] + cmd
+        test_cmd = ["time"] + test_cmd
+    if timeout > 0:
+        test_cmd.append("-timeout=" + str(timeout) + "s")
     f, path = tempfile.mkstemp()
     start = time.time()
     proc = subprocess.run(test_cmd, stdout=f, stderr=f)
@@ -135,7 +137,8 @@ def run_tests(
     race: bool             = typer.Option(False,  '--race/--no-race',  '-r/-R', help='Run with race checker'),
     loop: bool             = typer.Option(False,  '--loop',            '-l',    help='Run continuously'),
     growth: int            = typer.Option(10,     '--growth',          '-g',    help='Growth ratio of iterations when using --loop'),
-    timing: bool           = typer.Option(False,   '--timing',          '-t',    help='Report timing, only works on macOS'),
+    timing: bool           = typer.Option(False,  '--timing',          '-t',    help='Report timing, only works on macOS'),
+    timeout: int           = typer.Option(-1,     '--timeout',         '-to',   help='Timeout of test'),
     # fmt: on
 ):
 
@@ -201,7 +204,7 @@ def run_tests(
                     n = len(futures)
                     if n < workers:
                         for test in itertools.islice(test_instances, workers-n):
-                            futures.append(executor.submit(run_test, test, race, timing))
+                            futures.append(executor.submit(run_test, test, race, timing, timeout))
 
                     done, not_done = wait(futures, return_when=FIRST_COMPLETED)
 

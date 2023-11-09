@@ -353,16 +353,17 @@ func (kv *ShardKV) ValidateShardsInGroup() {
 	}
 }
 
-func (kv *ShardKV) UpdateInAndOutShards() {
+func (kv *ShardKV) UpdateInAndOutShards(prevConfig *shardctrler.Config) {
 	kv.inShards = make(map[int]int)
 	kv.outShards = make(map[int]int)
 
 	for shard := 0; shard < shardctrler.NShards; shard++ {
-		if kv.curConfig.Shards[shard] == kv.gid && kv.prevConfig.Shards[shard] != kv.gid {
-			kv.inShards[shard] = kv.prevConfig.Shards[shard]
+		if kv.curConfig.Shards[shard] == kv.gid && prevConfig.Shards[shard] != kv.gid &&
+			kv.kvStore.GetShardConfigNum(shard) < kv.curConfig.Num {
+			kv.inShards[shard] = prevConfig.Shards[shard]
 		}
 
-		if kv.curConfig.Shards[shard] != kv.gid && kv.prevConfig.Shards[shard] == kv.gid {
+		if kv.curConfig.Shards[shard] != kv.gid && prevConfig.Shards[shard] == kv.gid {
 			kv.outShards[shard] = kv.curConfig.Shards[shard]
 		}
 	}
