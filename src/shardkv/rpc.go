@@ -35,14 +35,13 @@ func (kv *ShardKV) prepareForMergeReqProcess(mReq MergeReq) (Err, int) {
 		return ErrOutdatedShard, -1
 	}
 
-	if mReq.ConfigNum == kv.curConfig.Num {
-		if _, inShardsOk := kv.inShards[mReq.Shard]; !inShardsOk {
-			kv.DPrintf("[%v(G%v-CF%v)] Refuse to merge shard %v from G%v "+
-				"(shard not in inShards of CF%v)\n",
-				basicInfo, mReq.GID, mReq.ConfigNum, mReq.Shard, mReq.GID, kv.curConfig.Num)
-			kv.mu.Unlock()
-			return ErrRepeatedShard, -1
-		}
+	shardConfigNum := kv.kvStore.GetShardConfigNum(mReq.Shard)
+	if mReq.ConfigNum <= shardConfigNum {
+		kv.DPrintf("[%v(G%v-CF%v)] Refuse to merge shard %v from G%v "+
+			"(shard ahead: %v(mReq.ConfigNum) <= %v(shardConfigNum))\n",
+			basicInfo, mReq.GID, mReq.ConfigNum, mReq.Shard, mReq.GID, mReq.ConfigNum, shardConfigNum)
+		kv.mu.Unlock()
+		return ErrRepeatedShard, -1
 	}
 	kv.mu.Unlock()
 
@@ -60,22 +59,13 @@ func (kv *ShardKV) prepareForDeleteReqProcess(dReq DeleteReq) (Err, int) {
 	basicInfo := kv.BasicInfo("prepareForDeleteReqProcess")
 
 	kv.mu.Lock()
-	if dReq.ConfigNum < kv.curConfig.Num {
+	shardConfigNum := kv.kvStore.GetShardConfigNum(dReq.Shard)
+	if dReq.ConfigNum <= shardConfigNum {
 		kv.DPrintf("[%v(CF%v)] Refuse to delete shard %v "+
-			"(shard outdated: %v(mReq.ConfigNum) < %v(curConfig.Num))\n",
+			"(shard ahead: %v(dReq.ConfigNum) <= %v(shardConfigNum))\n",
 			basicInfo, dReq.ConfigNum, dReq.Shard, dReq.ConfigNum, kv.curConfig.Num)
 		kv.mu.Unlock()
-		return ErrOutdatedShard, -1
-	}
-
-	if dReq.ConfigNum == kv.curConfig.Num {
-		if _, outShardsOk := kv.outShards[dReq.Shard]; !outShardsOk {
-			kv.DPrintf("[%v(CF%v)] Refuse to delete shard %v "+
-				"(shard not in outShards of CF%v)\n",
-				basicInfo, dReq.ConfigNum, dReq.Shard, kv.curConfig.Num)
-			kv.mu.Unlock()
-			return ErrRepeatedShard, -1
-		}
+		return ErrRepeatedShard, -1
 	}
 	kv.mu.Unlock()
 
@@ -211,9 +201,6 @@ func (kv *ShardKV) waitForMergeReqProcess(mReq MergeReq, index int) Err {
 		} else {
 			err = processedResult.Err
 			switch err {
-			case ErrAheadShard:
-				kv.DPrintf("[%v(G%v-CF%v)] Refuse to merge shard %v from G%v (shard ahead)\n",
-					basicInfo, mReq.GID, mReq.ConfigNum, mReq.Shard, mReq.GID)
 			case ErrOutdatedShard:
 				kv.DPrintf("[%v(G%v-CF%v)] Refuse to merge shard %v from G%v (shard outdated)\n",
 					basicInfo, mReq.GID, mReq.ConfigNum, mReq.Shard, mReq.GID)
@@ -261,9 +248,6 @@ func (kv *ShardKV) waitForDeleteReqProcess(dReq DeleteReq, index int) Err {
 		} else {
 			err = processedResult.Err
 			switch err {
-			case ErrOutdatedShard:
-				kv.DPrintf("[%v(CF%v)] Delete shard %v (shard outdated)\n",
-					basicInfo, dReq.ConfigNum, dReq.Shard)
 			case ErrRepeatedShard:
 				kv.DPrintf("[%v(CF%v)] Delete shard %v (shard has been deleted)\n",
 					basicInfo, dReq.ConfigNum, dReq.Shard)

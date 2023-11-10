@@ -30,11 +30,10 @@ const (
 	ConfigQueryInterval = 100
 
 	//	server
-	ProcessWaitTimeout  = 250
-	ShardMigrateTimeout = 1000
-
-	ConfigPollPeriod   = 100
-	ShardMigratePeriod = 250
+	ProcessWaitTimeout    = 250
+	ShardMigratePauseTime = 100
+	ConfigPollPeriod      = 100
+	ShardMigratePeriod    = 250
 )
 
 const (
@@ -44,7 +43,6 @@ const (
 	ErrWrongLeader     = "ErrWrongLeader"
 	ErrOvertime        = "ErrOvertime"
 
-	ErrAheadShard    = "ErrAheadShard"
 	ErrOutdatedShard = "ErrOutdatedShard"
 	ErrRepeatedShard = "ErrRepeatedShard"
 )
@@ -174,6 +172,19 @@ type ProcessResult struct {
 	Shard     int
 
 	Err Err
+}
+
+//	==============================
+//	ShardInfo
+//	==============================
+type InShardInfo struct {
+	FromGID int
+}
+
+type OutShardInfo struct {
+	ToGID     int
+	Servers   []string
+	ConfigNum int
 }
 
 //	==============================
@@ -354,17 +365,21 @@ func (kv *ShardKV) ValidateShardsInGroup() {
 }
 
 func (kv *ShardKV) UpdateInAndOutShards(prevConfig *shardctrler.Config) {
-	kv.inShards = make(map[int]int)
-	kv.outShards = make(map[int]int)
-
 	for shard := 0; shard < shardctrler.NShards; shard++ {
 		if kv.curConfig.Shards[shard] == kv.gid && prevConfig.Shards[shard] != kv.gid &&
 			kv.kvStore.GetShardConfigNum(shard) < kv.curConfig.Num {
-			kv.inShards[shard] = prevConfig.Shards[shard]
+			kv.inShards[shard] = InShardInfo{
+				FromGID: prevConfig.Shards[shard],
+			}
 		}
 
 		if kv.curConfig.Shards[shard] != kv.gid && prevConfig.Shards[shard] == kv.gid {
-			kv.outShards[shard] = kv.curConfig.Shards[shard]
+			toGID := kv.curConfig.Shards[shard]
+			kv.outShards[shard] = OutShardInfo{
+				ToGID:     toGID,
+				Servers:   kv.curConfig.Groups[toGID],
+				ConfigNum: kv.curConfig.Num,
+			}
 		}
 	}
 }
