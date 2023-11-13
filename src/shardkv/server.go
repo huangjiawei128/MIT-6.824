@@ -35,6 +35,9 @@ type ShardKV struct {
 	outShards        map[int]OutShardInfo // shard -> outShardInfo
 	newConfig        chan bool
 	gid2targetLeader sync.Map
+
+	findNewConfigNum  int
+	findNewConfigTime time.Time
 }
 
 //
@@ -46,10 +49,10 @@ type ShardKV struct {
 func (kv *ShardKV) Kill() {
 	basicInfo := kv.BasicInfo("Kill")
 
+	kv.DPrintf("[%v] Be killed\n", basicInfo)
 	atomic.StoreInt32(&kv.dead, 1)
 	kv.rf.Kill()
 	// Your code here, if desired.
-	kv.DPrintf("[%v] Be killed\n", basicInfo)
 }
 
 func (kv *ShardKV) killed() bool {
@@ -104,17 +107,15 @@ func (kv *ShardKV) processor() {
 			kv.DPrintf("[%v] Receive the snapshot at I%v to be processed | term: %v | lastProcessed: %v\n",
 				basicInfo, m.SnapshotIndex, m.SnapshotTerm, lastProcessed)
 
-			kv.mu.Lock()
 			if kv.rf.CondInstallSnapshot(m.SnapshotTerm, m.SnapshotIndex, m.Snapshot) {
-				kv.readSnapshot(m.Snapshot)
-				lastProcessed = m.SnapshotIndex
-				kv.DPrintf("[%v] Finish to read the snapshot at I%v | "+
-					"curConfig.Num: %v | inShards: %v | outShards: %v\n",
-					basicInfo, m.SnapshotIndex, kv.curConfig.Num, kv.inShards, kv.outShards)
+				kv.processSnapshot(m.Snapshot, m.SnapshotIndex)
 			}
-			kv.mu.Unlock()
+			lastProcessed = m.SnapshotIndex
 		} else if m.CommandValid && m.CommandIndex > lastProcessed {
 			switch m.Command.(type) {
+			case Nop:
+				kv.DPrintf("[%v] Receive the nop at I%v to be processed | lastProcessed: %v\n",
+					basicInfo, m.CommandIndex, lastProcessed)
 			case Op:
 				op := m.Command.(Op)
 				kv.DPrintf("[%v] Receive the op at I%v to be processed %v | lastProcessed: %v\n",
@@ -150,6 +151,28 @@ func (kv *ShardKV) processor() {
 
 			lastProcessed = m.CommandIndex
 		}
+	}
+}
+
+func (kv *ShardKV) processSnapshot(snapShot []byte, index int) {
+	basicInfo := kv.BasicInfo("processSnapshot")
+
+	installNewConfig := false
+	kv.mu.Lock()
+	defer func() {
+		kv.mu.Unlock()
+		if installNewConfig && len(kv.newConfig) != cap(kv.newConfig) {
+			kv.newConfig <- true
+		}
+	}()
+
+	oriConfigNum := kv.curConfig.Num
+	kv.readSnapshot(snapShot)
+	kv.DPrintf("[%v] Finish reading the snapshot at I%v | "+
+		"curConfig.Num: %v | inShards: %v | outShards: %v\n",
+		basicInfo, index, kv.curConfig.Num, kv.inShards, kv.outShards)
+	if kv.curConfig.Num != oriConfigNum {
+		installNewConfig = true
 	}
 }
 
@@ -202,14 +225,14 @@ func (kv *ShardKV) processOpCommand(op *Op, index int) {
 	if op.Type == GetV {
 		opResult.Value = kv.kvStore.Get(op.Key)
 		kv.clientId2executedOpId[op.ClientId] = op.Id
-		kv.DPrintf("[%v] Execute the op %v\n",
+		kv.DPrintf("[%v] Finish executing the op %v\n",
 			basicInfo, op)
 	} else if op.Type == PutKV || op.Type == AppendKV {
 		opBeforeExecuted := kv.OpExecuted(op.ClientId, op.Id)
 		if !opBeforeExecuted {
 			kv.kvStore.PutAppend(op.Key, op.Value, op.Type)
 			kv.clientId2executedOpId[op.ClientId] = op.Id
-			kv.DPrintf("[%v] Execute the op %v | stored value: %v\n",
+			kv.DPrintf("[%v] Finish executing the op %v | stored value: %v\n",
 				basicInfo, op, kv.kvStore.Get(op.Key))
 		} else {
 			kv.DPrintf("[%v] Refuse to execute the duplicated op %v | stored value: %v\n",
@@ -262,7 +285,7 @@ func (kv *ShardKV) processConfigCommand(newConfig *shardctrler.Config, index int
 		kv.kvStore.UpdateShardConfigNum(shard, kv.curConfig.Num)
 	}
 
-	kv.DPrintf("[%v] Finish to install the config %v | inShards: %v | outShards: %v\n",
+	kv.DPrintf("[%v] Finish installing the config %v | inShards: %v | outShards: %v\n",
 		basicInfo, newConfig, kv.inShards, kv.outShards)
 	installNewConfig = true
 }
@@ -311,7 +334,7 @@ func (kv *ShardKV) processMergeReqCommand(mReq *MergeReq, index int) {
 	}
 
 	delete(kv.inShards, mReq.Shard)
-	kv.DPrintf("[%v] Finish to merge shard %v from G%v | curConfig: %v | inShards: %v | validShards: %v\n",
+	kv.DPrintf("[%v] Finish merging shard %v from G%v | curConfig: %v | inShards: %v | validShards: %v\n",
 		basicInfo, mReq.Shard, mReq.GID, kv.curConfig, kv.inShards, kv.kvStore.GetValidShards())
 }
 
@@ -352,7 +375,7 @@ func (kv *ShardKV) processDeleteReqCommand(dReq *DeleteReq, index int) {
 	kv.kvStore.UpdateShardConfigNum(dReq.Shard, dReq.ConfigNum)
 
 	delete(kv.outShards, dReq.Shard)
-	kv.DPrintf("[%v] Finish to delete shard %v | curConfig: %v | outShards: %v | validShards: %v\n",
+	kv.DPrintf("[%v] Finish deleting shard %v | curConfig: %v | outShards: %v | validShards: %v\n",
 		basicInfo, dReq.Shard, kv.curConfig, kv.outShards, kv.kvStore.GetValidShards())
 }
 
@@ -363,11 +386,19 @@ func (kv *ShardKV) configPoller() {
 		time.Sleep(ConfigPollPeriod * time.Millisecond)
 
 		if _, isLeader := kv.rf.GetState(); !isLeader {
+			kv.DPrintf("[%v] Isn't leader\n", basicInfo)
 			continue
 		}
 
 		kv.mu.Lock()
 		curConfigNum := kv.curConfig.Num
+		if kv.findNewConfigNum > curConfigNum && time.Since(kv.findNewConfigTime) > StartNewConfigTimeout*time.Millisecond {
+			kv.findNewConfigTime = time.Now()
+			kv.mu.Unlock()
+			kv.DPrintf("[%v] Prepare to start Nop\n", basicInfo)
+			kv.rf.Start(Nop{})
+			continue
+		}
 		kv.mu.Unlock()
 
 		pollConfigNum := curConfigNum + 1
@@ -381,16 +412,21 @@ func (kv *ShardKV) configPoller() {
 		}
 
 		kv.mu.Lock()
-		if len(kv.inShards) > 0 {
-			kv.DPrintf("[%v] Refuse to start CF%v (inShards not empty)\n",
-				basicInfo, newConfig.Num)
+		if newConfig.Num <= kv.curConfig.Num {
+			kv.DPrintf("[%v] Refuse to start CF%v (config installed) | curConfig.Num: %v\n",
+				basicInfo, newConfig.Num, kv.curConfig.Num)
 			kv.mu.Unlock()
 			continue
 		}
 
-		if newConfig.Num <= kv.curConfig.Num {
-			kv.DPrintf("[%v] Refuse to start CF%v (config installed)\n",
-				basicInfo, newConfig.Num)
+		if newConfig.Num > kv.findNewConfigNum {
+			kv.findNewConfigNum = newConfig.Num
+			kv.findNewConfigTime = time.Now()
+		}
+
+		if len(kv.inShards) > 0 {
+			kv.DPrintf("[%v] Refuse to start CF%v (inShards not empty) | inShards: %v\n",
+				basicInfo, newConfig.Num, kv.inShards)
 			kv.mu.Unlock()
 			continue
 		}
@@ -414,7 +450,9 @@ func (kv *ShardKV) shardMigrant() {
 		timer.Stop()
 
 		if _, isLeader := kv.rf.GetState(); !isLeader {
-			time.Sleep(ShardMigratePauseTime * time.Millisecond)
+			kv.DPrintf("[%v] Isn't leader\n", basicInfo)
+			//	time.Sleep(ShardMigratePauseTime * time.Millisecond)
+			continue
 		}
 
 		kv.mu.Lock()
@@ -509,7 +547,7 @@ func (kv *ShardKV) migrateShard(shard int, info OutShardInfo) {
 		dReply := DeleteShardDatasReply{}
 		kv.DeleteShardDatas(&dArgs, &dReply)
 		if dReply.Err != OK {
-			kv.DPrintf("[%v] Finish to delete shard %v on S%v-%v\n",
+			kv.DPrintf("[%v] Finish deleting shard %v on S%v-%v\n",
 				basicInfo, dArgs.Shard, kv.gid, kv.me)
 		} else {
 			kv.DPrintf("[%v] Fail to delete shard %v on S%v-%v | err: %v\n",
@@ -549,6 +587,7 @@ func (kv *ShardKV) migrateShard(shard int, info OutShardInfo) {
 func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Nop{})
 	labgob.Register(Op{})
 	labgob.Register(shardctrler.Config{})
 	labgob.Register(MergeReq{})
@@ -562,11 +601,12 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.ctrlers = ctrlers
 
 	kv.applyCh = make(chan raft.ApplyMsg)
-	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	kv.rf = raft.MakeWithGID(servers, me, persister, kv.applyCh, kv.gid)
 
 	// Your initialization code here.
 	// Use something like this to talk to the shardctrler:
-	kv.mck = shardctrler.MakeClerk(kv.ctrlers)
+	hostInfo := fmt.Sprintf("S%v-%v", kv.gid, kv.me)
+	kv.mck = shardctrler.MakeClerkWithHostInfo(kv.ctrlers, hostInfo)
 	kv.clientId2executedOpId = make(map[Int64Id]int)
 	kv.index2processedResultCh = make(map[int]chan ProcessResult)
 	kv.kvStore.Init()
@@ -576,7 +616,8 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.outShards = make(map[int]OutShardInfo)
 	kv.newConfig = make(chan bool, 1)
 
-	kv.mck.SetHostInfo(fmt.Sprintf("S%v-%v", kv.gid, kv.me))
+	kv.findNewConfigNum = 0
+	kv.findNewConfigTime = time.Now()
 	kv.DPrintf("[%v] Start new shard KV server | maxraftstate: %v | mck.clientId: %v\n",
 		kv.BasicInfo(""), kv.maxraftstate, kv.mck.GetClientId())
 

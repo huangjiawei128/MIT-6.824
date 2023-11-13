@@ -38,10 +38,10 @@ type KVServer struct {
 func (kv *KVServer) Kill() {
 	basicInfo := kv.BasicInfo("Kill")
 
+	kv.DPrintf("[%v] Be killed\n", basicInfo)
 	atomic.StoreInt32(&kv.dead, 1)
 	kv.rf.Kill()
 	// Your code here, if desired.
-	kv.DPrintf("[%v] Be killed\n", basicInfo)
 }
 
 func (kv *KVServer) killed() bool {
@@ -84,12 +84,10 @@ func (kv *KVServer) processor() {
 			kv.DPrintf("[%v] Receive the snapshot at I%v to be processed | term: %v | lastProcessed: %v\n",
 				basicInfo, m.SnapshotIndex, m.SnapshotTerm, lastProcessed)
 
-			kv.mu.Lock()
 			if kv.rf.CondInstallSnapshot(m.SnapshotTerm, m.SnapshotIndex, m.Snapshot) {
-				kv.readSnapshot(m.Snapshot)
-				lastProcessed = m.SnapshotIndex
+				kv.processSnapshot(m.Snapshot, m.SnapshotIndex)
 			}
-			kv.mu.Unlock()
+			lastProcessed = m.SnapshotIndex
 		} else if m.CommandValid && m.CommandIndex > lastProcessed {
 			op := m.Command.(Op)
 			kv.DPrintf("[%v] Receive the op at I%v to be processed %v | lastProcessed: %v\n",
@@ -109,6 +107,17 @@ func (kv *KVServer) processor() {
 			lastProcessed = m.CommandIndex
 		}
 	}
+}
+
+func (kv *KVServer) processSnapshot(snapShot []byte, index int) {
+	basicInfo := kv.BasicInfo("processSnapshot")
+
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	kv.readSnapshot(snapShot)
+	kv.DPrintf("[%v] Finish reading the snapshot at I%v\n",
+		basicInfo, index)
 }
 
 func (kv *KVServer) processOpCommand(op *Op, index int) {
@@ -140,14 +149,14 @@ func (kv *KVServer) processOpCommand(op *Op, index int) {
 	if op.Type == GetV {
 		opResult.Value = kv.kvStore.Get(op.Key)
 		kv.clientId2executedOpId[op.ClientId] = op.Id
-		kv.DPrintf("[%v] Execute the op %v\n",
+		kv.DPrintf("[%v] Finish executing the op %v\n",
 			basicInfo, op)
 	} else if op.Type == PutKV || op.Type == AppendKV {
 		opBeforeExecuted := kv.OpExecuted(op.ClientId, op.Id)
 		if !opBeforeExecuted {
 			kv.kvStore.PutAppend(op.Key, op.Value, op.Type)
 			kv.clientId2executedOpId[op.ClientId] = op.Id
-			kv.DPrintf("[%v] Execute the op %v | stored value: %v\n",
+			kv.DPrintf("[%v] Finish executing the op %v | stored value: %v\n",
 				basicInfo, op, kv.kvStore.Get(op.Key))
 		} else {
 			kv.DPrintf("[%v] Refuse to execute the duplicated op %v | stored value: %v\n",

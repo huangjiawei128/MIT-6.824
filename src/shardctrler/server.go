@@ -32,10 +32,10 @@ type ShardCtrler struct {
 func (sc *ShardCtrler) Kill() {
 	basicInfo := sc.BasicInfo("Kill")
 
+	sc.DPrintf("[%v] Be killed\n", basicInfo)
 	atomic.StoreInt32(&sc.dead, 1)
 	sc.rf.Kill()
 	// Your code here, if desired.
-	sc.DPrintf("[%v] Be killed\n", basicInfo)
 }
 
 func (sc *ShardCtrler) killed() bool {

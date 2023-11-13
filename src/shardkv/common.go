@@ -31,9 +31,10 @@ const (
 
 	//	server
 	ProcessWaitTimeout    = 250
-	ShardMigratePauseTime = 100
+	StartNewConfigTimeout = 1500
 	ConfigPollPeriod      = 100
-	ShardMigratePeriod    = 250
+	ShardMigratePeriod    = 750
+	//	ShardMigratePauseTime = 100
 )
 
 const (
@@ -105,7 +106,7 @@ type Op struct {
 }
 
 func (op Op) String() string {
-	ret := fmt.Sprintf("{Id: %v | ClientId: %v | Type: %v | ConfigNum: %v | Key: %v | Value: %v}",
+	ret := fmt.Sprintf("Op{Id: %v | ClientId: %v | Type: %v | ConfigNum: %v | Key: %v | Value: %v}",
 		op.Id, op.ClientId, op.Type, op.ConfigNum, Key2Str(op.Key), Value2Str(op.Value))
 	return ret
 }
@@ -120,7 +121,7 @@ type MergeReq struct {
 }
 
 func (mReq MergeReq) String() string {
-	ret := fmt.Sprintf("{GID: %v | ConfigNum: %v | Shard: %v | ClientId2ExecutedOpId: %v}",
+	ret := fmt.Sprintf("MergeReq{GID: %v | ConfigNum: %v | Shard: %v | ClientId2ExecutedOpId: %v}",
 		mReq.GID, mReq.ConfigNum, mReq.Shard, mReq.ClientId2ExecutedOpId)
 	return ret
 }
@@ -131,8 +132,15 @@ type DeleteReq struct {
 }
 
 func (dReq DeleteReq) String() string {
-	ret := fmt.Sprintf("{ConfigNum: %v | Shard: %v}",
+	ret := fmt.Sprintf("DeleteReq{ConfigNum: %v | Shard: %v}",
 		dReq.ConfigNum, dReq.Shard)
+	return ret
+}
+
+type Nop struct{}
+
+func (nop Nop) String() string {
+	ret := fmt.Sprintf("Nop{}")
 	return ret
 }
 

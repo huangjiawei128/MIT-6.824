@@ -9,9 +9,9 @@ import (
 )
 
 // Debugging
-const Debug = false
+const Debug = true
 
-const ApplyDebug = false
+const ApplyDebug = true
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug {
@@ -42,24 +42,42 @@ func (rf *Raft) ApplyDPrintf(format string, a ...interface{}) (n int, err error)
 }
 
 func (rf *Raft) BasicInfo(methodName string) string {
-	if methodName == "" {
-		return fmt.Sprintf("R%v Raft", rf.me)
+	var ret string
+	if rf.gid == -1 {
+		ret = fmt.Sprintf("R%v Raft", rf.me)
+	} else {
+		ret = fmt.Sprintf("R%v-%v Raft", rf.gid, rf.me)
 	}
-	return fmt.Sprintf("R%v Raft.%v", rf.me, methodName)
+	if methodName != "" {
+		ret += fmt.Sprintf(".%v", methodName)
+	}
+	return ret
 }
 
 func (rf *Raft) BasicInfoWithTerm(methodName string) string {
-	if methodName == "" {
-		return fmt.Sprintf("R%v T%v Raft", rf.me, rf.currentTerm)
+	var ret string
+	if rf.gid == -1 {
+		ret = fmt.Sprintf("R%v T%v Raft", rf.me, rf.currentTerm)
+	} else {
+		ret = fmt.Sprintf("R%v-%v T%v Raft", rf.gid, rf.me, rf.currentTerm)
 	}
-	return fmt.Sprintf("R%v T%v Raft.%v", rf.me, rf.currentTerm, methodName)
+	if methodName != "" {
+		ret += fmt.Sprintf(".%v", methodName)
+	}
+	return ret
 }
 
 func (rf *Raft) BasicInfoWithTermChange(methodName string, oriTerm int) string {
-	if methodName == "" {
-		return fmt.Sprintf("R%v T%v->T%v Raft", rf.me, oriTerm, rf.currentTerm)
+	var ret string
+	if rf.gid == -1 {
+		ret = fmt.Sprintf("R%v T%v->T%v Raft", rf.me, oriTerm, rf.currentTerm)
+	} else {
+		ret = fmt.Sprintf("R%v-%v T%v->T%v Raft", rf.gid, rf.me, oriTerm, rf.currentTerm)
 	}
-	return fmt.Sprintf("R%v T%v->T%v Raft.%v", rf.me, oriTerm, rf.currentTerm, methodName)
+	if methodName != "" {
+		ret += fmt.Sprintf(".%v", methodName)
+	}
+	return ret
 }
 
 const (

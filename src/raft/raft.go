@@ -119,6 +119,8 @@ type Raft struct {
 	applyCond          *sync.Cond
 
 	newCommand chan bool
+
+	gid int
 }
 
 // return currentTerm and whether this server
@@ -577,7 +579,16 @@ func (rf *Raft) applyTicker() {
 //
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
+	return newRaft(peers, me, persister, applyCh, -1)
+}
 
+func MakeWithGID(peers []*labrpc.ClientEnd, me int,
+	persister *Persister, applyCh chan ApplyMsg, gid int) *Raft {
+	return newRaft(peers, me, persister, applyCh, gid)
+}
+
+func newRaft(peers []*labrpc.ClientEnd, me int,
+	persister *Persister, applyCh chan ApplyMsg, gid int) *Raft {
 	rf := &Raft{}
 	rf.peers = peers
 	rf.persister = persister
@@ -606,6 +617,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.finishedApplyOrder = 0
 	rf.applyCond = sync.NewCond(&rf.mu)
 	rf.newCommand = make(chan bool, 1)
+	rf.gid = gid
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())

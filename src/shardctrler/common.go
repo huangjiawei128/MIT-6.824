@@ -126,7 +126,7 @@ type OpResult struct {
 
 func (op Op) String() string {
 	var ret string
-	ret = fmt.Sprintf("{Id: %v | ClientId: %v | Type: %v | ",
+	ret = fmt.Sprintf("Op{Id: %v | ClientId: %v | Type: %v | ",
 		op.Id, op.ClientId, op.Type)
 	switch op.Type {
 	case QueryCF:
@@ -151,10 +151,16 @@ func (ck *Clerk) DPrintf(format string, a ...interface{}) (n int, err error) {
 }
 
 func (ck *Clerk) BasicInfo(methodName string) string {
-	if methodName == "" {
-		return fmt.Sprintf("Ctrler-C%v Clerk", ck.clientId)
+	var ret string
+	if ck.hostInfo == "" {
+		ret = fmt.Sprintf("Ctrler-C%v Clerk", ck.clientId)
+	} else {
+		ret = fmt.Sprintf("Ctrler-C%v %v Clerk", ck.clientId, ck.hostInfo)
 	}
-	return fmt.Sprintf("Ctrler-C%v %v Clerk.%v", ck.clientId, ck.hostInfo, methodName)
+	if methodName != "" {
+		ret += fmt.Sprintf(".%v", methodName)
+	}
+	return ret
 }
 
 func (ck *Clerk) UpdateTargetLeader() {
@@ -163,10 +169,6 @@ func (ck *Clerk) UpdateTargetLeader() {
 
 func (ck *Clerk) GetClientId() Int64Id {
 	return ck.clientId
-}
-
-func (ck *Clerk) SetHostInfo(info string) {
-	ck.hostInfo = info
 }
 
 //	==============================

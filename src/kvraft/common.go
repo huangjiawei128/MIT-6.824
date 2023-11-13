@@ -95,7 +95,7 @@ type Op struct {
 
 func (op Op) String() string {
 	var ret string
-	ret = fmt.Sprintf("{Id: %v | ClientId: %v | Type: %v | Key: %v | Value: %v}",
+	ret = fmt.Sprintf("Op{Id: %v | ClientId: %v | Type: %v | Key: %v | Value: %v}",
 		op.Id, op.ClientId, op.Type, Key2Str(op.Key), Value2Str(op.Value))
 	return ret
 }

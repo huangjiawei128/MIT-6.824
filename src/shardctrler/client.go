@@ -39,6 +39,14 @@ func nrand() int64 {
 }
 
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
+	return newClerk(servers, "")
+}
+
+func MakeClerkWithHostInfo(servers []*labrpc.ClientEnd, info string) *Clerk {
+	return newClerk(servers, info)
+}
+
+func newClerk(servers []*labrpc.ClientEnd, info string) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
 	// Your code here.
@@ -46,6 +54,7 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	mathRand.Seed(time.Now().Unix() + int64(ck.clientId))
 	ck.nextOpId = 0
 	ck.targetLeader = mathRand.Intn(len(servers))
+	ck.hostInfo = info
 	ck.DPrintf("[%v] Make new ShardCtrler clerk | targetLeader: %v\n",
 		ck.BasicInfo(""), ck.targetLeader)
 	return ck

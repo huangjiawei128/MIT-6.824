@@ -68,7 +68,8 @@ type Clerk struct {
 //
 func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
-	ck.sm = shardctrler.MakeClerk(ctrlers)
+	hostInfo := fmt.Sprintf("C%v", ck.clientId)
+	ck.sm = shardctrler.MakeClerkWithHostInfo(ctrlers, hostInfo)
 	ck.make_end = make_end
 	// You'll have to add code here.
 	ck.config = ck.sm.Query(-1)
@@ -76,7 +77,6 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 	mathRand.Seed(time.Now().Unix() + int64(ck.clientId))
 	ck.nextOpId = 0
 	ck.gid2targetLeader = make(map[int]int)
-	ck.sm.SetHostInfo(fmt.Sprintf("C%v", ck.clientId))
 	ck.DPrintf("[%v] Make new shard KV clerk | sm.clientId: %v\n",
 		ck.BasicInfo(""), ck.sm.GetClientId())
 	return ck
