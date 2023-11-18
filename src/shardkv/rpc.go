@@ -272,9 +272,8 @@ func (kv *ShardKV) waitForDeleteReqProcess(dReq DeleteReq, index int) Err {
 type GetArgs struct {
 	Key string
 	// You'll have to add definitions here.
-	ClientId  Int64Id
-	OpId      int
-	ConfigNum int
+	ClientId Int64Id
+	OpId     int
 }
 
 type GetReply struct {
@@ -286,11 +285,10 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
 	opType := OpType(GetV)
 	op := Op{
-		Id:        args.OpId,
-		ClientId:  args.ClientId,
-		Type:      opType,
-		Key:       args.Key,
-		ConfigNum: args.ConfigNum,
+		Id:       args.OpId,
+		ClientId: args.ClientId,
+		Type:     opType,
+		Key:      args.Key,
 	}
 
 	prepareErr, index := kv.prepareForOpProcess(op)
@@ -313,9 +311,8 @@ type PutAppendArgs struct {
 	// You'll have to add definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
-	ClientId  Int64Id
-	OpId      int
-	ConfigNum int
+	ClientId Int64Id
+	OpId     int
 }
 
 type PutAppendReply struct {
@@ -326,12 +323,11 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
 	opType := args.Op
 	op := Op{
-		Id:        args.OpId,
-		ClientId:  args.ClientId,
-		Type:      opType,
-		Key:       args.Key,
-		Value:     args.Value,
-		ConfigNum: args.ConfigNum,
+		Id:       args.OpId,
+		ClientId: args.ClientId,
+		Type:     opType,
+		Key:      args.Key,
+		Value:    args.Value,
 	}
 
 	prepareErr, index := kv.prepareForOpProcess(op)

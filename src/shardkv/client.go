@@ -92,10 +92,9 @@ func (ck *Clerk) Get(key string) string {
 	basicInfo := ck.BasicInfo("Get")
 
 	args := GetArgs{
-		Key:       key,
-		ClientId:  ck.clientId,
-		OpId:      ck.nextOpId,
-		ConfigNum: ck.config.Num,
+		Key:      key,
+		ClientId: ck.clientId,
+		OpId:     ck.nextOpId,
 	}
 	shard := key2shard(key)
 
@@ -148,7 +147,6 @@ func (ck *Clerk) Get(key string) string {
 		time.Sleep(ConfigQueryInterval * time.Millisecond)
 		// ask controler for the latest configuration.
 		ck.config = ck.sm.Query(-1)
-		args.ConfigNum = ck.config.Num
 	}
 	ck.nextOpId++
 	return ret
@@ -162,11 +160,10 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	basicInfo := ck.BasicInfo("PutAppend")
 
 	args := PutAppendArgs{
-		Key:       key,
-		Value:     value,
-		ClientId:  ck.clientId,
-		OpId:      ck.nextOpId,
-		ConfigNum: ck.config.Num,
+		Key:      key,
+		Value:    value,
+		ClientId: ck.clientId,
+		OpId:     ck.nextOpId,
 	}
 	switch op {
 	case "Put":
@@ -225,7 +222,6 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		time.Sleep(ConfigQueryInterval * time.Millisecond)
 		// ask controler for the latest configuration.
 		ck.config = ck.sm.Query(-1)
-		args.ConfigNum = ck.config.Num
 	}
 	ck.nextOpId++
 }

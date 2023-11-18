@@ -14,10 +14,9 @@ type ShardCtrler struct {
 	me      int
 	rf      *raft.Raft
 	applyCh chan raft.ApplyMsg
+	dead    int32 // set by Kill()
 
 	// Your data here.
-	dead int32 // set by Kill()
-
 	configs                   []Config // indexed by config num
 	clientId2executedOpId     map[Int64Id]int
 	index2processedOpResultCh map[int]chan OpResult

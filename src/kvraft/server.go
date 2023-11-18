@@ -11,13 +11,12 @@ import (
 )
 
 type KVServer struct {
-	mu      sync.Mutex
-	me      int
-	rf      *raft.Raft
-	applyCh chan raft.ApplyMsg
-	dead    int32 // set by Kill()
-
-	maxraftstate int // snapshot if log grows this big
+	mu           sync.Mutex
+	me           int
+	rf           *raft.Raft
+	applyCh      chan raft.ApplyMsg
+	maxraftstate int   // snapshot if log grows this big
+	dead         int32 // set by Kill()
 
 	// Your definitions here.
 	clientId2executedOpId     map[Int64Id]int

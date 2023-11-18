@@ -99,15 +99,14 @@ type Op struct {
 	Id       int
 	ClientId Int64Id
 
-	Type      OpType
-	ConfigNum int
-	Key       string
-	Value     string
+	Type  OpType
+	Key   string
+	Value string
 }
 
 func (op Op) String() string {
-	ret := fmt.Sprintf("Op{Id: %v | ClientId: %v | Type: %v | ConfigNum: %v | Key: %v | Value: %v}",
-		op.Id, op.ClientId, op.Type, op.ConfigNum, Key2Str(op.Key), Value2Str(op.Value))
+	ret := fmt.Sprintf("Op{Id: %v | ClientId: %v | Type: %v | Key: %v | Value: %v}",
+		op.Id, op.ClientId, op.Type, Key2Str(op.Key), Value2Str(op.Value))
 	return ret
 }
 

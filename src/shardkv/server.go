@@ -20,22 +20,20 @@ type ShardKV struct {
 	make_end     func(string) *labrpc.ClientEnd
 	gid          int
 	ctrlers      []*labrpc.ClientEnd
-	maxraftstate int // snapshot if log grows this big
+	maxraftstate int   // snapshot if log grows this big
+	dead         int32 // set by Kill()
 
 	// Your definitions here.
-	dead int32 // set by Kill()
-
 	mck                     *shardctrler.Clerk
 	clientId2executedOpId   map[Int64Id]int
 	index2processedResultCh map[int]chan ProcessResult
 	kvStore                 KVStore
+	gid2targetLeader        sync.Map
 
-	curConfig        shardctrler.Config
-	inShards         map[int]InShardInfo  //	shard -> inShardInfo
-	outShards        map[int]OutShardInfo // shard -> outShardInfo
-	newConfig        chan bool
-	gid2targetLeader sync.Map
-
+	curConfig         shardctrler.Config
+	inShards          map[int]InShardInfo  //	shard -> inShardInfo
+	outShards         map[int]OutShardInfo // shard -> outShardInfo
+	newConfig         chan bool
 	findNewConfigNum  int
 	findNewConfigTime time.Time
 }
@@ -615,7 +613,6 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.inShards = make(map[int]InShardInfo)
 	kv.outShards = make(map[int]OutShardInfo)
 	kv.newConfig = make(chan bool, 1)
-
 	kv.findNewConfigNum = 0
 	kv.findNewConfigTime = time.Now()
 	kv.DPrintf("[%v] Start new shard KV server | maxraftstate: %v | mck.clientId: %v\n",
