@@ -105,7 +105,7 @@ func (ck *Clerk) Get(key string) string {
 		if servers, _ok := ck.config.Groups[gid]; _ok {
 			// try each server for the shard.
 			ok := false
-			targetLeader := ck.getTargetLeader(gid, len(servers))
+			targetLeader := ck.GetTargetLeader(gid, len(servers))
 			for !ok {
 				srv := ck.make_end(servers[targetLeader])
 				reply := GetReply{}
@@ -179,10 +179,10 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		if servers, _ok := ck.config.Groups[gid]; _ok {
 			// try each server for the shard.
 			ok := false
-			targetLeader := ck.getTargetLeader(gid, len(servers))
+			targetLeader := ck.GetTargetLeader(gid, len(servers))
 			for !ok {
 				srv := ck.make_end(servers[targetLeader])
-				reply := GetReply{}
+				reply := PutAppendReply{}
 				ck.DPrintf("[%v(%v)] Send PutAppend RPC to S%v-%v | op: %v | key: %v | shard: %v | value: %v\n",
 					basicInfo, args.OpId, gid, targetLeader, args.Op, key, shard, value)
 

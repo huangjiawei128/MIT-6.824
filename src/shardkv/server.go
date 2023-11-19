@@ -474,14 +474,14 @@ func (kv *ShardKV) shardMigrant() {
 func (kv *ShardKV) migrateShard(shard int, info OutShardInfo) {
 	basicInfo := kv.BasicInfo("migrateShard")
 
-	clientId2executedOpIdCopy := make(map[Int64Id]int)
-	for clientId, executedOpId := range kv.clientId2executedOpId {
-		clientId2executedOpIdCopy[clientId] = executedOpId
-	}
-
 	shardDataCopy := make(ShardData)
 	for key, value := range kv.kvStore.ShardDatas[shard] {
 		shardDataCopy[key] = value
+	}
+
+	clientId2executedOpIdCopy := make(map[Int64Id]int)
+	for clientId, executedOpId := range kv.clientId2executedOpId {
+		clientId2executedOpIdCopy[clientId] = executedOpId
 	}
 
 	mArgs := MergeShardDatasArgs{
@@ -496,7 +496,7 @@ func (kv *ShardKV) migrateShard(shard int, info OutShardInfo) {
 	go func(servers []string, args *MergeShardDatasArgs) {
 		flag := false
 		ok := false
-		targetLeader := kv.getTargetLeader(info.ToGID, len(servers))
+		targetLeader := kv.GetTargetLeader(info.ToGID, len(servers))
 		for !ok {
 			srv := kv.make_end(servers[targetLeader])
 			reply := &MergeShardDatasReply{}

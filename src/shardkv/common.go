@@ -209,7 +209,7 @@ func (ck *Clerk) BasicInfo(methodName string) string {
 	return fmt.Sprintf("KV-C%v Clerk.%v", ck.clientId, methodName)
 }
 
-func (ck *Clerk) getTargetLeader(gid int, serverNum int) int {
+func (ck *Clerk) GetTargetLeader(gid int, serverNum int) int {
 	ret, ok := ck.gid2targetLeader[gid]
 	if !ok {
 		ret = mathRand.Intn(serverNum)
@@ -219,7 +219,7 @@ func (ck *Clerk) getTargetLeader(gid int, serverNum int) int {
 }
 
 func (ck *Clerk) UpdateTargetLeader(gid int, serverNum int) int {
-	oriTargetLeader := ck.getTargetLeader(gid, serverNum)
+	oriTargetLeader := ck.GetTargetLeader(gid, serverNum)
 	newTargetLeader := (oriTargetLeader + 1) % serverNum
 	ck.gid2targetLeader[gid] = newTargetLeader
 	return newTargetLeader
@@ -391,7 +391,7 @@ func (kv *ShardKV) UpdateInAndOutShards(prevConfig *shardctrler.Config) {
 	}
 }
 
-func (kv *ShardKV) getTargetLeader(gid int, serverNum int) int {
+func (kv *ShardKV) GetTargetLeader(gid int, serverNum int) int {
 	ret, ok := kv.gid2targetLeader.Load(gid)
 	if !ok {
 		ret = mathRand.Intn(serverNum)
@@ -401,7 +401,7 @@ func (kv *ShardKV) getTargetLeader(gid int, serverNum int) int {
 }
 
 func (kv *ShardKV) UpdateTargetLeader(gid int, serverNum int) int {
-	oriTargetLeader := kv.getTargetLeader(gid, serverNum)
+	oriTargetLeader := kv.GetTargetLeader(gid, serverNum)
 	newTargetLeader := (oriTargetLeader + 1) % serverNum
 	kv.gid2targetLeader.Store(gid, newTargetLeader)
 	return newTargetLeader

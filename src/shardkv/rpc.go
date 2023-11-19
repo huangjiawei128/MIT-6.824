@@ -170,6 +170,10 @@ func (kv *ShardKV) waitForOpProcess(op Op, index int) (Err, string) {
 	}
 	timer.Stop()
 
+	kv.mu.Lock()
+	kv.DeleteProcessedResultCh(index)
+	kv.mu.Unlock()
+
 	return err, value
 }
 
@@ -219,6 +223,10 @@ func (kv *ShardKV) waitForMergeReqProcess(mReq MergeReq, index int) Err {
 	}
 	timer.Stop()
 
+	kv.mu.Lock()
+	kv.DeleteProcessedResultCh(index)
+	kv.mu.Unlock()
+
 	return err
 }
 
@@ -262,6 +270,10 @@ func (kv *ShardKV) waitForDeleteReqProcess(dReq DeleteReq, index int) Err {
 			basicInfo, dReq.ConfigNum, dReq.Shard)
 	}
 	timer.Stop()
+
+	kv.mu.Lock()
+	kv.DeleteProcessedResultCh(index)
+	kv.mu.Unlock()
 
 	return err
 }
