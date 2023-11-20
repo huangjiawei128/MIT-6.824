@@ -30,12 +30,11 @@ type ShardKV struct {
 	kvStore                 KVStore
 	gid2targetLeader        sync.Map
 
-	curConfig         shardctrler.Config
-	inShards          map[int]InShardInfo  //	shard -> inShardInfo
-	outShards         map[int]OutShardInfo // shard -> outShardInfo
-	newConfig         chan bool
-	findNewConfigNum  int
-	findNewConfigTime time.Time
+	curConfig          shardctrler.Config
+	checkCurConfigTime time.Time
+	inShards           map[int]InShardInfo  //	shard -> inShardInfo
+	outShards          map[int]OutShardInfo // shard -> outShardInfo
+	newConfig          chan bool
 }
 
 //
@@ -171,6 +170,7 @@ func (kv *ShardKV) processSnapshot(snapShot []byte, index int) {
 		basicInfo, index, kv.curConfig.Num, kv.inShards, kv.outShards)
 	if kv.curConfig.Num != oriConfigNum {
 		installNewConfig = true
+		kv.checkCurConfigTime = time.Now()
 	}
 }
 
@@ -286,6 +286,7 @@ func (kv *ShardKV) processConfigCommand(newConfig *shardctrler.Config, index int
 	kv.DPrintf("[%v] Finish installing the config %v | inShards: %v | outShards: %v\n",
 		basicInfo, newConfig, kv.inShards, kv.outShards)
 	installNewConfig = true
+	kv.checkCurConfigTime = time.Now()
 }
 
 func (kv *ShardKV) processMergeReqCommand(mReq *MergeReq, index int) {
@@ -390,14 +391,17 @@ func (kv *ShardKV) configPoller() {
 
 		kv.mu.Lock()
 		curConfigNum := kv.curConfig.Num
-		if kv.findNewConfigNum > curConfigNum && time.Since(kv.findNewConfigTime) > StartNewConfigTimeout*time.Millisecond {
-			kv.findNewConfigTime = time.Now()
-			kv.mu.Unlock()
-			kv.DPrintf("[%v] Prepare to start Nop\n", basicInfo)
-			kv.rf.Start(Nop{})
-			continue
+		startNop := false
+		if len(kv.inShards) > 0 && time.Since(kv.checkCurConfigTime) > StartNopTimeout*time.Millisecond {
+			kv.checkCurConfigTime = time.Now()
+			startNop = true
 		}
 		kv.mu.Unlock()
+
+		if startNop {
+			kv.DPrintf("[%v] Prepare to start Nop\n", basicInfo)
+			kv.rf.Start(Nop{})
+		}
 
 		pollConfigNum := curConfigNum + 1
 		kv.DPrintf("[%v] Prepare to poll CF%v\n",
@@ -415,11 +419,6 @@ func (kv *ShardKV) configPoller() {
 				basicInfo, newConfig.Num, kv.curConfig.Num)
 			kv.mu.Unlock()
 			continue
-		}
-
-		if newConfig.Num > kv.findNewConfigNum {
-			kv.findNewConfigNum = newConfig.Num
-			kv.findNewConfigTime = time.Now()
 		}
 
 		if len(kv.inShards) > 0 {
@@ -449,7 +448,6 @@ func (kv *ShardKV) shardMigrant() {
 
 		if _, isLeader := kv.rf.GetState(); !isLeader {
 			kv.DPrintf("[%v] Isn't leader\n", basicInfo)
-			//	time.Sleep(ShardMigratePauseTime * time.Millisecond)
 			continue
 		}
 
@@ -613,8 +611,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.inShards = make(map[int]InShardInfo)
 	kv.outShards = make(map[int]OutShardInfo)
 	kv.newConfig = make(chan bool, 1)
-	kv.findNewConfigNum = 0
-	kv.findNewConfigTime = time.Now()
+	kv.checkCurConfigTime = time.Now()
 	kv.DPrintf("[%v] Start new shard KV server | maxraftstate: %v | mck.clientId: %v\n",
 		kv.BasicInfo(""), kv.maxraftstate, kv.mck.GetClientId())
 

@@ -30,11 +30,10 @@ const (
 	ConfigQueryInterval = 100
 
 	//	server
-	ProcessWaitTimeout    = 250
-	StartNewConfigTimeout = 1500
-	ConfigPollPeriod      = 100
-	ShardMigratePeriod    = 750
-	//	ShardMigratePauseTime = 100
+	ProcessWaitTimeout = 250
+	StartNopTimeout    = 1500
+	ConfigPollPeriod   = 100
+	ShardMigratePeriod = 750
 )
 
 const (
